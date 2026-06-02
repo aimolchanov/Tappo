@@ -1,5 +1,4 @@
 import {
-  Nunito_400Regular,
   Nunito_700Bold,
   Nunito_800ExtraBold,
   useFonts,
@@ -16,7 +15,6 @@ SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({
-    Nunito_400Regular,
     Nunito_700Bold,
     Nunito_800ExtraBold,
   });
@@ -33,8 +31,12 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <ErrorBoundary>
         <GestureHandlerRootView style={{ flex: 1 }}>
-          <Stack screenOptions={{ headerShown: false }}>
+          <Stack screenOptions={{ headerShown: false, animation: "fade" }}>
             <Stack.Screen name="index" />
+            <Stack.Screen name="coloring" />
+            <Stack.Screen name="music" />
+            <Stack.Screen name="puzzles" />
+            <Stack.Screen name="settings" />
           </Stack>
         </GestureHandlerRootView>
       </ErrorBoundary>
