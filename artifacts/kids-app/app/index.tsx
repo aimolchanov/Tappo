@@ -93,7 +93,11 @@ export default function HomeScreen() {
       if (finished && !navigated.current) {
         navigated.current = true;
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        router.push("/settings");
+        // Pass an expiry token so settings screen can verify it was opened via the lock
+        router.push({
+          pathname: "/settings",
+          params: { exp: String(Date.now() + 15_000) },
+        });
       }
     });
   };
