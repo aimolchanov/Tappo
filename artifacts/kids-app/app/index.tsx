@@ -24,13 +24,14 @@ interface Activity {
   emoji: string;
   label: string;
   color: string;
-  route: "/coloring" | "/music" | "/puzzles";
+  route: "/coloring" | "/music" | "/puzzles" | "/drawing";
 }
 
 const ACTIVITIES: Activity[] = [
   { emoji: "🎨", label: "Раскраски", color: "#FF5C5C", route: "/coloring" },
   { emoji: "🎵", label: "Музыка", color: "#FFD93D", route: "/music" },
   { emoji: "🧩", label: "Пазлы", color: "#4ECDC4", route: "/puzzles" },
+  { emoji: "🖌️", label: "Рисование", color: "#A78BFA", route: "/drawing" },
 ];
 
 function ActivityButton({ activity }: { activity: Activity }) {
@@ -159,14 +160,15 @@ const styles = StyleSheet.create({
   },
   row: {
     flexDirection: "row",
+    flexWrap: "wrap",
     alignItems: "center",
     justifyContent: "center",
-    gap: 28,
+    gap: 24,
     paddingHorizontal: 24,
   },
   buttonWrap: {
-    flex: 1,
-    maxWidth: 280,
+    width: "44%",
+    maxWidth: 260,
     aspectRatio: 1,
   },
   button: {
