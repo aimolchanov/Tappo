@@ -2,6 +2,7 @@ import { Feather } from "@expo/vector-icons";
 import { useAudioPlayer } from "expo-audio";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
+import { useAppSettings } from "@/contexts/SettingsContext";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
@@ -244,6 +245,8 @@ export default function PuzzlesScreen() {
   const insets = useSafeAreaInsets();
   const { width: SW, height: SH } = Dimensions.get("window");
 
+  const { soundEffects, volume } = useAppSettings();
+
   const snapPlayer = useAudioPlayer(
     require("@/assets/sounds/snap.wav") as number
   );
@@ -316,10 +319,13 @@ export default function PuzzlesScreen() {
   }));
 
   const handlePiecePlaced = (id: number) => {
-    try {
-      snapPlayer.seekTo(0);
-      snapPlayer.play();
-    } catch {}
+    if (soundEffects) {
+      try {
+        snapPlayer.volume = volume;
+        snapPlayer.seekTo(0);
+        snapPlayer.play();
+      } catch {}
+    }
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
     setPlacedCount((prev) => {
@@ -327,10 +333,13 @@ export default function PuzzlesScreen() {
       if (next === totalPieces) {
         setIsComplete(true);
         setTimeout(() => {
-          try {
-            completePlayer.seekTo(0);
-            completePlayer.play();
-          } catch {}
+          if (soundEffects) {
+            try {
+              completePlayer.volume = volume;
+              completePlayer.seekTo(0);
+              completePlayer.play();
+            } catch {}
+          }
         }, 150);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         celebScale.value = withSequence(

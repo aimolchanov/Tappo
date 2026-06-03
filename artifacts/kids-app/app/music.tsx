@@ -2,6 +2,7 @@ import { Feather } from "@expo/vector-icons";
 import { useAudioPlayer } from "expo-audio";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
+import { useAppSettings } from "@/contexts/SettingsContext";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Platform,
@@ -104,6 +105,13 @@ function MusicNoteButton({
 export default function MusicScreen() {
   const insets = useSafeAreaInsets();
 
+  const { soundEffects, volume } = useAppSettings();
+  // Keep in refs so playNote/setTimeout closures always see the latest values
+  const soundEffectsRef = useRef(soundEffects);
+  const volumeRef = useRef(volume);
+  useEffect(() => { soundEffectsRef.current = soundEffects; }, [soundEffects]);
+  useEffect(() => { volumeRef.current = volume; }, [volume]);
+
   // All 8 players must be declared at the top level (hook rules)
   const p0 = useAudioPlayer(NOTES[0].file);
   const p1 = useAudioPlayer(NOTES[1].file);
@@ -156,11 +164,14 @@ export default function MusicScreen() {
 
   // ── Core: play a note ──
   const playNote = useCallback((idx: number) => {
-    try {
-      playersRef.current[idx].seekTo(0);
-      playersRef.current[idx].play();
-    } catch {
-      // Never crash on audio failure
+    if (soundEffectsRef.current) {
+      try {
+        playersRef.current[idx].volume = volumeRef.current;
+        playersRef.current[idx].seekTo(0);
+        playersRef.current[idx].play();
+      } catch {
+        // Never crash on audio failure
+      }
     }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setGlowTrigger({ noteIndex: idx, seq: Date.now() });

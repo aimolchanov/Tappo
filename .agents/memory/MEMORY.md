@@ -1,0 +1,3 @@
+- [Settings Context](settings-context.md) — global settings (sound/volume/ageGroup/language) live in SettingsContext; all screens read via `useAppSettings()`; only settings.tsx writes via `useSettings()`.
+- [Skia on Web](skia-web.md) — react-native-skia v2.2.x crashes on web (CanvasKit undefined). Pattern: `if (Platform.OS === 'web') return <WebStub />` in a wrapper component, never before hooks.
+- [expo-audio volume](expo-audio-volume.md) — set `player.volume = value` (0–1) immediately before `player.seekTo(0)` + `player.play()`. Use refs in setTimeout/useCallback closures to avoid stale values.
