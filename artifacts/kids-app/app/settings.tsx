@@ -1,9 +1,13 @@
 import { Feather } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as FileSystem from "expo-file-system";
+import * as Sharing from "expo-sharing";
 import { useLocalSearchParams, router } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
+  FlatList,
+  Image,
   Modal,
   PanResponder,
   Platform,
@@ -21,6 +25,8 @@ import Reanimated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useSettings } from "@/hooks/useSettings";
+
+const SAVE_DIR = (FileSystem.documentDirectory ?? "") + "my_works/";
 
 // ─── Translations ────────────────────────────────────────────────
 const TR = {
@@ -48,6 +54,10 @@ const TR = {
     deleteAllWorks: "Удалить все работы",
     deleteWorksConfirm: "Удалить все работы?",
     deleteWorksMsg: "Это действие нельзя отменить.",
+    shareWork: "Поделиться",
+    deleteOneConfirm: "Удалить этот рисунок?",
+    deleteOneMsg: "Это действие нельзя отменить.",
+    worksCount: (n: number) => `${n} ${n === 1 ? "рисунок" : n < 5 ? "рисунка" : "рисунков"}`,
     sectionLanguage: "Язык интерфейса",
     sectionPrivacy: "Данные и приватность",
     privacyPolicy: "Политика конфиденциальности",
@@ -102,6 +112,10 @@ const TR = {
     deleteAllWorks: "Delete All Works",
     deleteWorksConfirm: "Delete all works?",
     deleteWorksMsg: "This action cannot be undone.",
+    shareWork: "Share",
+    deleteOneConfirm: "Delete this drawing?",
+    deleteOneMsg: "This action cannot be undone.",
+    worksCount: (n: number) => `${n} ${n === 1 ? "drawing" : "drawings"}`,
     sectionLanguage: "Interface Language",
     sectionPrivacy: "Data & Privacy",
     privacyPolicy: "Privacy Policy",
@@ -326,29 +340,110 @@ function PrivacyModal({
 }
 
 // ─── My Works modal ──────────────────────────────────────────────
+interface WorkFile {
+  filename: string;
+  uri: string;
+  createdAt: Date;
+}
+
+async function loadWorks(): Promise<WorkFile[]> {
+  try {
+    const info = await FileSystem.getInfoAsync(SAVE_DIR);
+    if (!info.exists) return [];
+    const files = await FileSystem.readDirectoryAsync(SAVE_DIR);
+    return files
+      .filter((f) => f.endsWith(".png"))
+      .map((filename) => {
+        const ts = parseInt(filename.replace("drawing_", "").replace(".png", ""), 10);
+        return { filename, uri: SAVE_DIR + filename, createdAt: new Date(isNaN(ts) ? 0 : ts) };
+      })
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+  } catch {
+    return [];
+  }
+}
+
+function formatDate(d: Date, lang: "ru" | "en"): string {
+  if (!d.getTime()) return "";
+  const opts: Intl.DateTimeFormatOptions = { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" };
+  try {
+    return d.toLocaleDateString(lang === "ru" ? "ru-RU" : "en-US", opts);
+  } catch {
+    return d.toLocaleDateString();
+  }
+}
+
 function WorksModal({
   visible,
   onClose,
   t,
+  lang,
 }: {
   visible: boolean;
   onClose: () => void;
   t: (typeof TR)["ru"];
+  lang: "ru" | "en";
 }) {
   const insets = useSafeAreaInsets();
+  const [works, setWorks] = useState<WorkFile[]>([]);
+  const [loading, setLoading] = useState(false);
 
-  const handleDeleteAll = () => {
+  const reload = useCallback(async () => {
+    setLoading(true);
+    const items = await loadWorks();
+    setWorks(items);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    if (visible) reload();
+  }, [visible, reload]);
+
+  const handleDeleteOne = useCallback(
+    (item: WorkFile) => {
+      Alert.alert(t.deleteOneConfirm, t.deleteOneMsg, [
+        { text: t.cancel, style: "cancel" },
+        {
+          text: t.deleteWork,
+          style: "destructive",
+          onPress: async () => {
+            await FileSystem.deleteAsync(item.uri, { idempotent: true });
+            setWorks((prev) => prev.filter((w) => w.filename !== item.filename));
+          },
+        },
+      ]);
+    },
+    [t]
+  );
+
+  const handleShare = useCallback(async (item: WorkFile) => {
+    try {
+      const available = await Sharing.isAvailableAsync();
+      if (!available) {
+        Alert.alert("", "Sharing not available on this device.");
+        return;
+      }
+      await Sharing.shareAsync(item.uri, { mimeType: "image/png", dialogTitle: t.shareWork });
+    } catch {
+      Alert.alert("", "Could not share the file.");
+    }
+  }, [t]);
+
+  const handleDeleteAll = useCallback(() => {
     Alert.alert(t.deleteWorksConfirm, t.deleteWorksMsg, [
       { text: t.cancel, style: "cancel" },
       {
         text: t.deleteAllWorks,
         style: "destructive",
-        onPress: () => {
-          // Future: delete saved files from expo-file-system
+        onPress: async () => {
+          await Promise.all(works.map((w) => FileSystem.deleteAsync(w.uri, { idempotent: true })));
+          setWorks([]);
         },
       },
     ]);
-  };
+  }, [works, t]);
+
+  const isEmpty = works.length === 0;
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet">
@@ -358,27 +453,72 @@ function WorksModal({
           { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 16 },
         ]}
       >
+        {/* Header */}
         <View style={styles.modalHeader}>
-          <Text style={styles.modalTitle}>{t.manageWorks}</Text>
+          <View>
+            <Text style={styles.modalTitle}>{t.manageWorks}</Text>
+            {!isEmpty && (
+              <Text style={styles.worksCount}>{t.worksCount(works.length)}</Text>
+            )}
+          </View>
           <Pressable onPress={onClose} style={styles.modalClose}>
             <Feather name="x" size={22} color="#555" />
           </Pressable>
         </View>
 
-        {/* Empty state */}
-        <View style={styles.emptyState}>
-          <Feather name="image" size={48} color="#C7C7CC" />
-          <Text style={styles.emptyTitle}>{t.noWorksTitle}</Text>
-          <Text style={styles.emptySub}>{t.noWorksSub}</Text>
-        </View>
+        {/* Content */}
+        {isEmpty ? (
+          <View style={styles.emptyState}>
+            <Feather name="image" size={52} color="#C7C7CC" />
+            <Text style={styles.emptyTitle}>{t.noWorksTitle}</Text>
+            <Text style={styles.emptySub}>{t.noWorksSub}</Text>
+          </View>
+        ) : (
+          <FlatList
+            data={works}
+            numColumns={3}
+            keyExtractor={(item) => item.filename}
+            contentContainerStyle={styles.worksGrid}
+            columnWrapperStyle={{ gap: 10 }}
+            renderItem={({ item }) => (
+              <View style={styles.workCard}>
+                <Image
+                  source={{ uri: item.uri }}
+                  style={styles.workThumb}
+                  resizeMode="cover"
+                />
+                <Text style={styles.workDate} numberOfLines={1}>
+                  {formatDate(item.createdAt, lang)}
+                </Text>
+                {/* Actions overlay */}
+                <View style={styles.workActions}>
+                  <Pressable
+                    style={[styles.workActionBtn, { backgroundColor: "#4ECDC4" }]}
+                    onPress={() => handleShare(item)}
+                    hitSlop={4}
+                  >
+                    <Feather name="share" size={14} color="#FFF" />
+                  </Pressable>
+                  <Pressable
+                    style={[styles.workActionBtn, { backgroundColor: "#FF3B30" }]}
+                    onPress={() => handleDeleteOne(item)}
+                    hitSlop={4}
+                  >
+                    <Feather name="trash-2" size={14} color="#FFF" />
+                  </Pressable>
+                </View>
+              </View>
+            )}
+          />
+        )}
 
+        {/* Footer buttons */}
         <View style={{ paddingHorizontal: 24, gap: 12 }}>
-          <Pressable
-            style={[styles.doneBtn, styles.dangerBtn, { opacity: 0.4 }]}
-            disabled
-          >
-            <Text style={styles.doneBtnText}>{t.deleteAllWorks}</Text>
-          </Pressable>
+          {!isEmpty && (
+            <Pressable style={[styles.doneBtn, styles.dangerBtn]} onPress={handleDeleteAll}>
+              <Text style={styles.doneBtnText}>{t.deleteAllWorks}</Text>
+            </Pressable>
+          )}
           <Pressable style={styles.doneBtn} onPress={onClose}>
             <Text style={styles.doneBtnText}>{t.close}</Text>
           </Pressable>
@@ -630,6 +770,7 @@ export default function SettingsScreen() {
         visible={worksVisible}
         onClose={() => setWorksVisible(false)}
         t={t}
+        lang={settings.language}
       />
     </>
   );
@@ -926,5 +1067,54 @@ const styles = StyleSheet.create({
     color: "#8E8E93",
     textAlign: "center",
     lineHeight: 20,
+  },
+
+  // Works grid
+  worksCount: {
+    fontSize: 13,
+    color: "#8E8E93",
+    marginTop: 2,
+  },
+  worksGrid: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 16,
+    gap: 10,
+  },
+  workCard: {
+    flex: 1,
+    borderRadius: 12,
+    overflow: "hidden",
+    backgroundColor: "#F2F2F7",
+  },
+  workThumb: {
+    width: "100%",
+    aspectRatio: 1,
+    backgroundColor: "#E5E5EA",
+  },
+  workDate: {
+    fontSize: 10,
+    color: "#8E8E93",
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+  },
+  workActions: {
+    position: "absolute",
+    top: 6,
+    right: 6,
+    flexDirection: "row",
+    gap: 4,
+  },
+  workActionBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    justifyContent: "center",
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
+    elevation: 3,
   },
 });
