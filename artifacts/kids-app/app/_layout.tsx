@@ -11,6 +11,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { SettingsProvider } from "@/contexts/SettingsContext";
+import { DifficultyProvider } from "@/contexts/DifficultyContext";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -32,17 +33,19 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <ErrorBoundary>
         <SettingsProvider>
-          <GestureHandlerRootView style={{ flex: 1 }}>
-            <Stack screenOptions={{ headerShown: false, animation: "fade" }}>
-              <Stack.Screen name="index" />
-              <Stack.Screen name="coloring" />
-              <Stack.Screen name="music" />
-              <Stack.Screen name="puzzles" />
-              <Stack.Screen name="drawing" />
-              <Stack.Screen name="my-works" />
-              <Stack.Screen name="settings" />
-            </Stack>
-          </GestureHandlerRootView>
+          <DifficultyProvider>
+            <GestureHandlerRootView style={{ flex: 1 }}>
+              <Stack screenOptions={{ headerShown: false, animation: "fade" }}>
+                <Stack.Screen name="index" />
+                <Stack.Screen name="coloring" />
+                <Stack.Screen name="music" />
+                <Stack.Screen name="puzzles" />
+                <Stack.Screen name="drawing" />
+                <Stack.Screen name="my-works" />
+                <Stack.Screen name="settings" />
+              </Stack>
+            </GestureHandlerRootView>
+          </DifficultyProvider>
         </SettingsProvider>
       </ErrorBoundary>
     </SafeAreaProvider>

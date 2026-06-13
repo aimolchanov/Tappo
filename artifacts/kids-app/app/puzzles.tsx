@@ -3,6 +3,8 @@ import { useAudioPlayer } from "expo-audio";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
 import { useAppSettings } from "@/contexts/SettingsContext";
+import { useDifficulty } from "@/contexts/DifficultyContext";
+import { LEVEL_TO_PUZZLE } from "@/constants/difficulty";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
@@ -101,6 +103,7 @@ interface PieceProps {
   cols: number;
   rows: number;
   onPlaced: (id: number) => void;
+  onMiss: () => void;
   resetKey: number;
   isComplete: boolean;
 }
@@ -111,6 +114,7 @@ function PuzzlePieceView({
   cols,
   rows,
   onPlaced,
+  onMiss,
   resetKey,
   isComplete,
 }: PieceProps) {
@@ -168,6 +172,8 @@ function PuzzlePieceView({
                 useNativeDriver: false,
               }).start();
               onPlaced(config.id);
+            } else {
+              onMiss();
             }
           }
         },
@@ -181,7 +187,7 @@ function PuzzlePieceView({
         },
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [config.boardX, config.boardY, config.id, isComplete]
+    [config.boardX, config.boardY, config.id, isComplete, onMiss]
   );
 
   const totalW = pieceSize * cols;
@@ -246,6 +252,7 @@ export default function PuzzlesScreen() {
   const { width: SW, height: SH } = Dimensions.get("window");
 
   const { soundEffects, volume } = useAppSettings();
+  const { difficulty: diffLevel, recordSignal } = useDifficulty();
 
   const snapPlayer = useAudioPlayer(
     require("@/assets/sounds/snap.wav") as number
@@ -254,13 +261,31 @@ export default function PuzzlesScreen() {
     require("@/assets/sounds/complete.wav") as number
   );
 
-  const [difficulty, setDifficulty] = useState<Difficulty>("easy");
+  const { cols, rows } = LEVEL_TO_PUZZLE[diffLevel];
+  const totalPieces = cols * rows;
+
   const [resetKey, setResetKey] = useState(0);
   const [placedCount, setPlacedCount] = useState(0);
   const [isComplete, setIsComplete] = useState(false);
 
-  const { cols, rows } = DIFFICULTY[difficulty];
-  const totalPieces = cols * rows;
+  // Tracking refs for adaptive difficulty signal
+  const startTimeRef = useRef(Date.now());
+  const missCountRef = useRef(0);
+
+  // Reset puzzle when difficulty level changes externally
+  useEffect(() => {
+    setResetKey((k) => k + 1);
+    setPlacedCount(0);
+    setIsComplete(false);
+    celebScale.value = 1;
+    startTimeRef.current = Date.now();
+    missCountRef.current = 0;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [diffLevel]);
+
+  const handleMiss = useCallback(() => {
+    missCountRef.current += 1;
+  }, []);
 
   // ── Layout math ──
   const topPad = HEADER_H + insets.top + (Platform.OS === "web" ? 67 : 0);
@@ -332,6 +357,13 @@ export default function PuzzlesScreen() {
       const next = prev + 1;
       if (next === totalPieces) {
         setIsComplete(true);
+        // Record adaptive difficulty signal — silently, never shown to child
+        recordSignal({
+          screen: "puzzle",
+          durationMs: Date.now() - startTimeRef.current,
+          missCount: missCountRef.current,
+          hitCount: next,
+        });
         setTimeout(() => {
           if (soundEffects) {
             try {
@@ -351,13 +383,14 @@ export default function PuzzlesScreen() {
     });
   };
 
-  const resetPuzzle = (d: Difficulty) => {
-    setDifficulty(d);
+  const resetPuzzle = useCallback(() => {
     setResetKey((k) => k + 1);
     setPlacedCount(0);
     setIsComplete(false);
     celebScale.value = 1;
-  };
+    startTimeRef.current = Date.now();
+    missCountRef.current = 0;
+  }, [celebScale]);
 
   // ── Board slot outlines ──
   const slots = useMemo(() => {
@@ -392,23 +425,7 @@ export default function PuzzlesScreen() {
           <Feather name="arrow-left" size={28} color="#555" />
         </Pressable>
 
-        <View style={styles.diffRow}>
-          {(["easy", "medium", "hard"] as Difficulty[]).map((d) => {
-            const cfg = DIFFICULTY[d];
-            const active = difficulty === d;
-            return (
-              <Pressable
-                key={d}
-                onPress={() => resetPuzzle(d)}
-                style={[styles.diffBtn, active && styles.diffBtnActive]}
-              >
-                <DiffIcon cols={cfg.cols} rows={cfg.rows} active={active} />
-              </Pressable>
-            );
-          })}
-        </View>
-
-        {/* Progress: fills up as pieces are placed */}
+        {/* Progress dots — count changes with adaptive difficulty */}
         <View style={styles.progressRow}>
           {Array.from({ length: totalPieces }, (_, i) => (
             <View
@@ -420,6 +437,11 @@ export default function PuzzlesScreen() {
             />
           ))}
         </View>
+
+        {/* Replay button — resets current puzzle at same difficulty */}
+        <Pressable onPress={resetPuzzle} style={styles.backBtn}>
+          <Feather name="refresh-cw" size={24} color="#555" />
+        </Pressable>
       </View>
 
       {/* ── Board slot outlines ── */}
@@ -459,6 +481,7 @@ export default function PuzzlesScreen() {
             cols={cols}
             rows={rows}
             onPlaced={handlePiecePlaced}
+            onMiss={handleMiss}
             resetKey={resetKey}
             isComplete={isComplete}
           />

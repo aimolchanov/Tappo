@@ -19,6 +19,8 @@ import Reanimated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { usePop } from "@/hooks/usePopSound";
+import { useDifficulty } from "@/contexts/DifficultyContext";
+import { LEVEL_TO_BTN_SCALE } from "@/constants/difficulty";
 
 type Route = "/coloring" | "/drawing" | "/music" | "/puzzles" | "/my-works";
 
@@ -113,6 +115,8 @@ function ActivityButton({
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { width: W, height: H } = useWindowDimensions();
+  const { difficulty } = useDifficulty();
+  const btnScale = LEVEL_TO_BTN_SCALE[difficulty];
 
   // ── Layout maths ──────────────────────────────────────────────
   // Available space after safe area + padding
@@ -132,7 +136,7 @@ export default function HomeScreen() {
   const colWBot = usableW / 2; // 2 columns, but we keep same size as top row
 
   const btnSize = Math.floor(
-    Math.min(rowH * 0.92, colWTop * 0.82, colWBot * 0.6, 230)
+    Math.min(rowH * 0.92, colWTop * 0.82, colWBot * 0.6, 230) * btnScale
   );
 
   // ── Parent lock (gear) ────────────────────────────────────────

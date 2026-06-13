@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Platform,
   Pressable,
@@ -15,7 +15,7 @@ import Reanimated, {
   useSharedValue,
   withSpring,
 } from "react-native-reanimated";
-import Svg, { Circle, Path } from "react-native-svg";
+import Svg, { Circle, Path, Rect } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
@@ -25,6 +25,8 @@ import {
   ColoringRegion,
 } from "@/data/coloringImages";
 import { usePop } from "@/hooks/usePopSound";
+import { useDifficulty } from "@/contexts/DifficultyContext";
+import { LEVEL_TO_MAX_COLORING } from "@/constants/difficulty";
 
 const PALETTE = [
   "#FF4444",
@@ -105,10 +107,12 @@ function SvgCanvas({
   image,
   fills,
   onRegionPress,
+  onMiss,
 }: {
   image: ColoringImage;
   fills: Record<string, string>;
   onRegionPress: (id: string) => void;
+  onMiss: () => void;
 }) {
   const renderRegion = (region: ColoringRegion) => {
     const fill = fills[region.id] ?? region.defaultColor;
@@ -163,6 +167,8 @@ function SvgCanvas({
     );
   };
 
+  const [, , vw, vh] = image.viewBox.split(" ").map(Number);
+
   return (
     <Svg
       viewBox={image.viewBox}
@@ -170,6 +176,8 @@ function SvgCanvas({
       height="100%"
       preserveAspectRatio="xMidYMid meet"
     >
+      {/* Transparent catch-all for taps that miss every region */}
+      <Rect x={0} y={0} width={vw} height={vh} fill="transparent" onPress={onMiss} />
       {image.regions.map(renderRegion)}
       {image.decorations?.map(renderDecoration)}
     </Svg>
@@ -180,28 +188,79 @@ export default function ColoringScreen() {
   const insets = useSafeAreaInsets();
   const playPop = usePop();
 
-  const [currentId, setCurrentId] = useState(COLORING_IMAGES[0].id);
+  const { difficulty, recordSignal } = useDifficulty();
+  const maxComplexity = LEVEL_TO_MAX_COLORING[difficulty];
+
+  // Filter images to those appropriate for current difficulty level
+  const availableImages = COLORING_IMAGES.filter(
+    (img) => img.complexity <= maxComplexity
+  );
+
+  const [currentId, setCurrentId] = useState(availableImages[0]?.id ?? COLORING_IMAGES[0].id);
   const [selectedColor, setSelectedColor] = useState(PALETTE[0]);
   const [selectedColorIdx, setSelectedColorIdx] = useState(0);
   const [allFills, setAllFills] = useState<
     Record<string, Record<string, string>>
   >({});
 
+  // Tracking refs for adaptive difficulty signal
+  const startTimeRef = useRef(Date.now());
+  const missCountRef = useRef(0);
+  const hitCountRef = useRef(0);
+
+  // Reset tracking counters when image changes
+  useEffect(() => {
+    startTimeRef.current = Date.now();
+    missCountRef.current = 0;
+    hitCountRef.current = 0;
+  }, [currentId]);
+
+  // When difficulty changes, ensure selected image is still available
+  useEffect(() => {
+    if (!availableImages.find((img) => img.id === currentId)) {
+      setCurrentId(availableImages[0]?.id ?? COLORING_IMAGES[0].id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [difficulty]);
+
   const currentImage =
-    COLORING_IMAGES.find((img) => img.id === currentId) ?? COLORING_IMAGES[0];
+    availableImages.find((img) => img.id === currentId) ??
+    availableImages[0] ??
+    COLORING_IMAGES[0];
   const currentFills = allFills[currentId] ?? {};
 
-  const handleRegionPress = (regionId: string) => {
-    setAllFills((prev) => ({
-      ...prev,
-      [currentId]: {
-        ...(prev[currentId] ?? {}),
-        [regionId]: selectedColor,
-      },
-    }));
+  const handleMiss = useCallback(() => {
+    missCountRef.current += 1;
+  }, []);
+
+  const handleRegionPress = useCallback((regionId: string) => {
+    hitCountRef.current += 1;
+
+    setAllFills((prev) => {
+      const next = {
+        ...prev,
+        [currentId]: {
+          ...(prev[currentId] ?? {}),
+          [regionId]: selectedColor,
+        },
+      };
+
+      // Check if all regions are now filled → record signal
+      const filled = Object.keys(next[currentId] ?? {}).length;
+      if (filled === currentImage.regions.length) {
+        recordSignal({
+          screen: "coloring",
+          durationMs: Date.now() - startTimeRef.current,
+          missCount: missCountRef.current,
+          hitCount: hitCountRef.current,
+        });
+      }
+
+      return next;
+    });
     playPop();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  };
+  }, [currentId, selectedColor, currentImage.regions.length, recordSignal, playPop]);
 
   const handleColorSelect = (color: string, idx: number) => {
     setSelectedColor(color);
@@ -237,7 +296,7 @@ export default function ColoringScreen() {
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.thumbRow}
         >
-          {COLORING_IMAGES.map((img) => (
+          {availableImages.map((img) => (
             <ImageThumb
               key={img.id}
               image={img}
@@ -254,6 +313,7 @@ export default function ColoringScreen() {
           image={currentImage}
           fills={currentFills}
           onRegionPress={handleRegionPress}
+          onMiss={handleMiss}
         />
       </View>
 

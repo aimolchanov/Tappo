@@ -25,12 +25,18 @@ export interface ColoringImage {
   bgColor: string;
   regions: ColoringRegion[];
   decorations?: ColoringDecoration[];
+  /**
+   * 1 = simple (few large regions, easy to tap) — shown at difficulty level 1+
+   * 2 = medium (more regions, smaller areas) — shown at difficulty level 2+
+   */
+  complexity: 1 | 2;
 }
 
 // ─── BUTTERFLY ────────────────────────────────────────────
 const butterfly: ColoringImage = {
   id: "butterfly",
   emoji: "🦋",
+  complexity: 2,
   viewBox: "0 0 600 400",
   bgColor: "#F0F7FF",
   regions: [
@@ -85,6 +91,7 @@ const butterfly: ColoringImage = {
 const sun: ColoringImage = {
   id: "sun",
   emoji: "☀️",
+  complexity: 1,
   viewBox: "0 0 400 400",
   bgColor: "#FFFBF0",
   regions: [
@@ -117,6 +124,7 @@ const sun: ColoringImage = {
 const house: ColoringImage = {
   id: "house",
   emoji: "🏠",
+  complexity: 2,
   viewBox: "0 0 400 420",
   bgColor: "#F5FFF0",
   regions: [
@@ -170,6 +178,7 @@ const house: ColoringImage = {
 const caterpillar: ColoringImage = {
   id: "caterpillar",
   emoji: "🐛",
+  complexity: 1,
   viewBox: "0 0 600 260",
   bgColor: "#F5FFF5",
   regions: [
