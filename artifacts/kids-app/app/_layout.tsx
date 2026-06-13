@@ -1,8 +1,12 @@
 import {
   Nunito_700Bold,
   Nunito_800ExtraBold,
-  useFonts,
 } from "@expo-google-fonts/nunito";
+import {
+  Fredoka_600SemiBold,
+  Fredoka_700Bold,
+  useFonts,
+} from "@expo-google-fonts/fredoka";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect } from "react";
@@ -19,6 +23,8 @@ export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({
     Nunito_700Bold,
     Nunito_800ExtraBold,
+    Fredoka_600SemiBold,
+    Fredoka_700Bold,
   });
 
   useEffect(() => {

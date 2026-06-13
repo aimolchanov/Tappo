@@ -5,7 +5,7 @@ import { router } from "expo-router";
 import { useAppSettings } from "@/contexts/SettingsContext";
 import { useDifficulty } from "@/contexts/DifficultyContext";
 import { LEVEL_TO_PUZZLE } from "@/constants/difficulty";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
   Dimensions,
