@@ -27,7 +27,13 @@ import { LEVEL_TO_BTN_SCALE } from "@/constants/difficulty";
 const BG = "#FFF7ED";
 const TEXT_DARK = "#4A3728";
 
-type Route = "/coloring" | "/drawing" | "/music" | "/puzzles" | "/my-works";
+type Route =
+  | "/coloring"
+  | "/drawing"
+  | "/music"
+  | "/puzzles"
+  | "/my-works"
+  | "/matching";
 
 interface Activity {
   emoji: string;
@@ -72,6 +78,13 @@ const ACTIVITIES: Activity[] = [
     gradient: ["#B8E8CC", "#95D5B2"],
     shadow: "#95D5B2",
     route: "/my-works",
+  },
+  {
+    emoji: "🔀",
+    label: "Найди пару",
+    gradient: ["#FFB3C6", "#FF6B9D"],
+    shadow: "#FF6B9D",
+    route: "/matching",
   },
 ];
 
@@ -186,11 +199,10 @@ export default function HomeScreen() {
     H - insets.top - insets.bottom - padV * 2 - gearZone - rowGap;
 
   const rowH = usableH / 2;
-  const colWTop = usableW / 3;
-  const colWBot = usableW / 2;
+  const colW = usableW / 3; // 3 buttons per row in both rows
 
   const btnSize = Math.floor(
-    Math.min(rowH * 0.90, colWTop * 0.80, colWBot * 0.58, 220) * btnScale
+    Math.min(rowH * 0.90, colW * 0.80, 220) * btnScale
   );
 
   // ── Parent lock (gear) ────────────────────────────────────────

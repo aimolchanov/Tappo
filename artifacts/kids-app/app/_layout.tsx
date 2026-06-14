@@ -48,6 +48,7 @@ export default function RootLayout() {
                 <Stack.Screen name="puzzles" />
                 <Stack.Screen name="drawing" />
                 <Stack.Screen name="my-works" />
+                <Stack.Screen name="matching" />
                 <Stack.Screen name="settings" />
               </Stack>
             </GestureHandlerRootView>
