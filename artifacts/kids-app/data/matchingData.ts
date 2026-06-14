@@ -1,33 +1,30 @@
 /**
  * ─── MATCHING GAME DATA ───────────────────────────────────────────────────────
  *
- * Как добавить новый набор для раздела «Цвет»:
- * 1. Добавьте новый объект в COLORS (key, hex, itemEmojis).
- * 2. Больше ничего не нужно — generateColorPuzzle() подхватит автоматически.
+ * Три уровня сложности (1:1, 2:1, 2:1 с 4 цветами):
+ *   Level 1 — 3 предмета, 3 корзины   (строго 1 предмет на цвет)
+ *   Level 2 — 6 предметов, 3 корзины  (по 2 предмета каждого цвета)
+ *   Level 3 — 8 предметов, 4 корзины  (по 2 предмета каждого цвета)
  *
- * Как добавить новый ТИП задания (тень, форма и т.д.):
- * 1. Добавьте тип в PuzzleType.
- * 2. Создайте свой интерфейс (ShadowItem, ShapeItem…) и generateXxxPuzzle().
- * 3. Экранный компонент matching.tsx читает поле type и рендерит нужную версию.
+ * Каждый предмет ВСЕГДА имеет соответствующую корзину — головоломка всегда решаема.
  */
 
 import type { DiffLevel } from "@/constants/difficulty";
 
-// ─── Extensible puzzle type union ─────────────────────────────────
-export type PuzzleType = "color"; // | "shadow" | "shape" | "size" | ...
+// ─── Type union — extensible for future "shadow", "shape" types ────
+export type PuzzleType = "color";
 
-// ─── Color type interfaces ─────────────────────────────────────────
+// ─── Interfaces ────────────────────────────────────────────────────
 export interface MatchItem {
   id: string;
   colorKey: string;
-  color: string;   // hex background of the item circle
-  emoji: string;   // decorative emoji drawn on top of the circle
+  color: string; // shown as a solid colored inner circle on a neutral background
 }
 
 export interface MatchTarget {
   id: string;
   colorKey: string;
-  color: string;   // hex background of the basket — MUST match MatchItem.color
+  color: string;
 }
 
 export interface ColorPuzzle {
@@ -37,27 +34,26 @@ export interface ColorPuzzle {
 }
 
 // ─── Color palette ─────────────────────────────────────────────────
-// Тёплые, хорошо различимые цвета. Порядок = частота появления.
+// Яркие, хорошо различимые цвета. Первые 3 — максимально контрастные
+// (красный, жёлтый, синий — первичные, самые понятные малышам).
 const COLORS = [
-  { key: "red",    hex: "#FF6B6B", emojis: ["🍎", "🌷", "🍓", "❤️"] },
-  { key: "yellow", hex: "#FFD93D", emojis: ["⭐", "🌻", "🌟", "🍋"] },
-  { key: "teal",   hex: "#4ECDC4", emojis: ["💎", "🐟", "🫧", "🦋"] },
-  { key: "green",  hex: "#95D5B2", emojis: ["🍀", "🐸", "🌿", "🌱"] },
-  { key: "purple", hex: "#A78BFA", emojis: ["🍇", "🦄", "💜", "🌸"] },
-  { key: "orange", hex: "#FF9500", emojis: ["🍊", "🎃", "🦊", "🌼"] },
+  { key: "red",    hex: "#FF4757" },
+  { key: "yellow", hex: "#FFD32A" },
+  { key: "blue",   hex: "#45AAF2" },
+  { key: "green",  hex: "#26DE81" },
+  { key: "purple", hex: "#A29BFE" },
+  { key: "orange", hex: "#FD9644" },
 ] as const;
 
-// ─── Difficulty config ─────────────────────────────────────────────
-// One base item per selected color; distractors are extra same-color items
-// that go into an already-existing basket (harder sorting on level 3).
-// Total items: L1=2, L2=4, L3=6 — well within the 2-6 item target for ages 2-5.
+// ─── Difficulty config ──────────────────────────────────────────────
+// itemsPerColor одинаково для каждого цвета → никаких «ошибок»-перекосов.
 export const MATCHING_CONFIG: Record<
   DiffLevel,
-  { numColors: number; baseItems: number; distractors: number }
+  { numColors: number; itemsPerColor: number }
 > = {
-  1: { numColors: 2, baseItems: 1, distractors: 0 }, // 2 items, 2 baskets
-  2: { numColors: 3, baseItems: 1, distractors: 1 }, // 4 items, 3 baskets
-  3: { numColors: 4, baseItems: 1, distractors: 2 }, // 6 items, 4 baskets
+  1: { numColors: 3, itemsPerColor: 1 }, // 3 items : 3 baskets — strict 1:1
+  2: { numColors: 3, itemsPerColor: 2 }, // 6 items : 3 baskets — 2 per color
+  3: { numColors: 4, itemsPerColor: 2 }, // 8 items : 4 baskets — 2 per color
 };
 
 // ─── Helpers ───────────────────────────────────────────────────────
@@ -78,6 +74,7 @@ function uid() {
 // ─── Generator ─────────────────────────────────────────────────────
 export function generateColorPuzzle(level: DiffLevel): ColorPuzzle {
   const cfg = MATCHING_CONFIG[level];
+  // Shuffle and pick N colors; use slice of full palette
   const chosenColors = shuffle(COLORS).slice(0, cfg.numColors);
 
   const targets: MatchTarget[] = chosenColors.map((c) => ({
@@ -87,35 +84,15 @@ export function generateColorPuzzle(level: DiffLevel): ColorPuzzle {
   }));
 
   const items: MatchItem[] = [];
-
-  // One base item per selected color
   chosenColors.forEach((c) => {
-    const emojiPool = shuffle(c.emojis);
-    for (let i = 0; i < cfg.baseItems; i++) {
+    for (let i = 0; i < cfg.itemsPerColor; i++) {
       items.push({
         id: `item_${c.key}_${i}_${uid()}`,
         colorKey: c.key,
         color: c.hex,
-        emoji: emojiPool[i % emojiPool.length],
       });
     }
   });
-
-  // Distractors (level 3): extra items from already-chosen colors.
-  // A child has to sort more items into fewer baskets — harder but still fair.
-  if (cfg.distractors > 0) {
-    const extraColors = shuffle(chosenColors);
-    for (let i = 0; i < cfg.distractors; i++) {
-      const c = extraColors[i % extraColors.length];
-      const e = shuffle(c.emojis);
-      items.push({
-        id: `extra_${c.key}_${i}_${uid()}`,
-        colorKey: c.key,
-        color: c.hex,
-        emoji: e[0],
-      });
-    }
-  }
 
   return { type: "color", items: shuffle(items), targets };
 }
