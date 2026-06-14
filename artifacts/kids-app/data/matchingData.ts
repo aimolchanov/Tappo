@@ -48,13 +48,16 @@ const COLORS = [
 ] as const;
 
 // ─── Difficulty config ─────────────────────────────────────────────
+// One base item per selected color; distractors are extra same-color items
+// that go into an already-existing basket (harder sorting on level 3).
+// Total items: L1=2, L2=4, L3=6 — well within the 2-6 item target for ages 2-5.
 export const MATCHING_CONFIG: Record<
   DiffLevel,
-  { numColors: number; itemsPerColor: number; distractors: number }
+  { numColors: number; baseItems: number; distractors: number }
 > = {
-  1: { numColors: 2, itemsPerColor: 2, distractors: 0 }, // 4 items total
-  2: { numColors: 3, itemsPerColor: 2, distractors: 0 }, // 6 items total
-  3: { numColors: 4, itemsPerColor: 2, distractors: 2 }, // 10 items total (8+2 extra)
+  1: { numColors: 2, baseItems: 1, distractors: 0 }, // 2 items, 2 baskets
+  2: { numColors: 3, baseItems: 1, distractors: 1 }, // 4 items, 3 baskets
+  3: { numColors: 4, baseItems: 1, distractors: 2 }, // 6 items, 4 baskets
 };
 
 // ─── Helpers ───────────────────────────────────────────────────────
@@ -85,9 +88,10 @@ export function generateColorPuzzle(level: DiffLevel): ColorPuzzle {
 
   const items: MatchItem[] = [];
 
+  // One base item per selected color
   chosenColors.forEach((c) => {
     const emojiPool = shuffle(c.emojis);
-    for (let i = 0; i < cfg.itemsPerColor; i++) {
+    for (let i = 0; i < cfg.baseItems; i++) {
       items.push({
         id: `item_${c.key}_${i}_${uid()}`,
         colorKey: c.key,

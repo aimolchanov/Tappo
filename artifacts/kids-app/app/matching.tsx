@@ -149,7 +149,8 @@ function DraggableColorItem({
   const animPos = useRef(
     new Animated.ValueXY({ x: originX, y: originY })
   ).current;
-  const opacity = useRef(new Animated.Value(1)).current;
+  // Scale shrinks to ~0.62 when item lands in basket — stays visible under basket
+  const itemScale = useRef(new Animated.Value(1)).current;
   const isMatchedRef = useRef(false);
   const [isDragging, setIsDragging] = useState(false);
 
@@ -158,7 +159,7 @@ function DraggableColorItem({
     isMatchedRef.current = false;
     posRef.current = { x: originX, y: originY };
     animPos.setValue({ x: originX, y: originY });
-    opacity.setValue(1);
+    itemScale.setValue(1);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resetKey, originX, originY]);
 
@@ -210,18 +211,22 @@ function DraggableColorItem({
           }
 
           if (bestTarget) {
-            // ✅ Correct match — snap to basket
+            // ✅ Correct match — snap to basket center, then scale down so it
+            //    sits visually "inside" the basket (basket renders on top).
             isMatchedRef.current = true;
             Animated.spring(animPos, {
-              toValue: { x: bestTarget.centerX, y: bestTarget.centerY },
+              toValue: {
+                x: bestTarget.centerX - size / 2,
+                y: bestTarget.centerY - size / 2,
+              },
               tension: 220,
               friction: 7,
               useNativeDriver: false,
             }).start(() => {
-              // Fade out after arriving
-              Animated.timing(opacity, {
-                toValue: 0,
-                duration: 220,
+              Animated.spring(itemScale, {
+                toValue: 0.62,
+                tension: 200,
+                friction: 8,
                 useNativeDriver: false,
               }).start();
             });
@@ -267,8 +272,10 @@ function DraggableColorItem({
           height: size,
           borderRadius: size / 2,
           zIndex: isDragging ? 300 : 20,
-          opacity,
-          transform: animPos.getTranslateTransform(),
+          transform: [
+            ...animPos.getTranslateTransform(),
+            { scale: itemScale },
+          ],
           shadowColor: item.color,
           shadowOffset: { width: 0, height: isDragging ? 10 : 4 },
           shadowOpacity: isDragging ? 0.5 : 0.28,
@@ -552,28 +559,9 @@ export default function MatchingScreen() {
         </Pressable>
       </View>
 
-      {/* ── Baskets row ── */}
-      {targets.map((t) => (
-        <View
-          key={t.id}
-          style={{
-            position: "absolute",
-            left: t.centerX - BASKET_SIZE / 2,
-            top: t.centerY - BASKET_SIZE / 2,
-          }}
-        >
-          <BasketView
-            target={t}
-            size={BASKET_SIZE}
-            matchCount={matchCounts[t.id] ?? 0}
-          />
-        </View>
-      ))}
-
-      {/* ── Draggable items ── */}
+      {/* ── Draggable items — rendered FIRST so baskets appear on top ── */}
       {puzzle.items.map((item, idx) => {
         const pos = itemPositions[idx] ?? { x: 40, y: itemAreaTop + 20 };
-        // originX/Y is the top-left of the item circle
         const ox = pos.x;
         const oy = pos.y - ITEM_SIZE / 2;
         return (
@@ -593,6 +581,25 @@ export default function MatchingScreen() {
           />
         );
       })}
+
+      {/* ── Baskets row — rendered AFTER items so they appear on top ── */}
+      {targets.map((t) => (
+        <View
+          key={t.id}
+          style={{
+            position: "absolute",
+            left: t.centerX - BASKET_SIZE / 2,
+            top: t.centerY - BASKET_SIZE / 2,
+            zIndex: 50,
+          }}
+        >
+          <BasketView
+            target={t}
+            size={BASKET_SIZE}
+            matchCount={matchCounts[t.id] ?? 0}
+          />
+        </View>
+      ))}
 
       {/* ── Mascot ── */}
       <View

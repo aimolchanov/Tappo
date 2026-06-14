@@ -25,7 +25,7 @@ const DEFAULTS: AdaptiveState = {
 // ─── Signal type ──────────────────────────────────────────────────────────────
 export interface DifficultySignal {
   /** Which screen produced this signal */
-  screen: "puzzle" | "coloring";
+  screen: "puzzle" | "coloring" | "matching";
   /** How long the session lasted in ms */
   durationMs: number;
   /** Number of taps/drops that missed any target */
@@ -85,6 +85,13 @@ export function useAdaptiveDifficulty() {
           const tooEasy =
             signal.durationMs < THRESHOLDS.puzzle.easyMs &&
             signal.missCount === 0;
+          verdict = tooHard ? "hard" : tooEasy ? "easy" : "neutral";
+        } else if (signal.screen === "matching") {
+          const tooHard = missRatio > THRESHOLDS.matching.missRatioHard;
+          const tooEasy =
+            signal.hitCount > 0 &&
+            signal.missCount === 0 &&
+            signal.durationMs < THRESHOLDS.matching.easyMs;
           verdict = tooHard ? "hard" : tooEasy ? "easy" : "neutral";
         } else {
           const tooHard = missRatio > THRESHOLDS.coloring.missRatioHard;
