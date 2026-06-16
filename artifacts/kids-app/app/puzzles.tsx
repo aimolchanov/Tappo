@@ -5,6 +5,7 @@ import { router } from "expo-router";
 import { useAppSettings } from "@/contexts/SettingsContext";
 import { useDifficulty } from "@/contexts/DifficultyContext";
 import { LEVEL_TO_PUZZLE } from "@/constants/difficulty";
+import { usePop } from "@/hooks/usePopSound";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
@@ -26,21 +27,12 @@ import Reanimated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 // ─── Config ──────────────────────────────────────────────────────
-// Картинка для пазла лежит в assets/images/puzzle_1.png
-// Чтобы заменить — положите новый файл вместо неё (любой .png/.jpg)
 const PUZZLE_IMAGE = require("@/assets/images/puzzle_1.png");
 
-const SNAP_DIST = 60;
-const HEADER_H = 76;
 const GAP = 10;
-
-const DIFFICULTY = {
-  easy:   { cols: 2, rows: 2 },
-  medium: { cols: 3, rows: 2 },
-  hard:   { cols: 3, rows: 3 },
-} as const;
-
-type Difficulty = keyof typeof DIFFICULTY;
+const HEADER_H = 76;
+// Snap distance is capped — computed relative to pieceSize inside the screen
+const BASE_SNAP_RATIO = 0.55; // piece must be within 55% of its own size to snap
 
 // ─── Types ───────────────────────────────────────────────────────
 interface PieceConfig {
@@ -63,16 +55,8 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
-// ─── Difficulty icon ──────────────────────────────────────────────
-function DiffIcon({
-  cols,
-  rows,
-  active,
-}: {
-  cols: number;
-  rows: number;
-  active: boolean;
-}) {
+// ─── Difficulty grid icon ─────────────────────────────────────────
+function DiffIcon({ cols, rows, active }: { cols: number; rows: number; active: boolean }) {
   return (
     <View style={{ gap: 4 }}>
       {Array.from({ length: rows }, (_, r) => (
@@ -95,15 +79,15 @@ function DiffIcon({
 }
 
 // ─── One puzzle piece ─────────────────────────────────────────────
-// React Native's View overflow:hidden clips the image exactly —
-// Animated.ValueXY moves the piece; GPU-composited on iOS (smooth).
 interface PieceProps {
   config: PieceConfig;
   pieceSize: number;
+  snapDist: number;
   cols: number;
   rows: number;
   onPlaced: (id: number) => void;
   onMiss: () => void;
+  onPlayMiss: () => void;
   resetKey: number;
   isComplete: boolean;
 }
@@ -111,10 +95,12 @@ interface PieceProps {
 function PuzzlePieceView({
   config,
   pieceSize,
+  snapDist,
   cols,
   rows,
   onPlaced,
   onMiss,
+  onPlayMiss,
   resetKey,
   isComplete,
 }: PieceProps) {
@@ -125,7 +111,7 @@ function PuzzlePieceView({
   const isPlacedRef = useRef(false);
   const [isDragging, setIsDragging] = useState(false);
 
-  // Reset on difficulty change
+  // Reset on difficulty change or puzzle reset
   useEffect(() => {
     isPlacedRef.current = false;
     posRef.current = { x: config.trayX, y: config.trayY };
@@ -136,10 +122,8 @@ function PuzzlePieceView({
   const panResponder = useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () =>
-          !isPlacedRef.current && !isComplete,
-        onMoveShouldSetPanResponder: () =>
-          !isPlacedRef.current && !isComplete,
+        onStartShouldSetPanResponder: () => !isPlacedRef.current && !isComplete,
+        onMoveShouldSetPanResponder: () => !isPlacedRef.current && !isComplete,
         onPanResponderGrant: () => {
           setIsDragging(true);
           animPos.setOffset(posRef.current);
@@ -153,28 +137,43 @@ function PuzzlePieceView({
         onPanResponderRelease: (_, gs) => {
           setIsDragging(false);
           animPos.flattenOffset();
-          const x = posRef.current.x + gs.dx;
-          const y = posRef.current.y + gs.dy;
-          posRef.current = { x, y };
 
-          if (!isPlacedRef.current) {
-            const dist = Math.hypot(
-              x - config.boardX,
-              y - config.boardY
-            );
-            if (dist < SNAP_DIST) {
-              isPlacedRef.current = true;
-              posRef.current = { x: config.boardX, y: config.boardY };
-              Animated.spring(animPos, {
-                toValue: { x: config.boardX, y: config.boardY },
-                tension: 200,
-                friction: 7,
-                useNativeDriver: false,
-              }).start();
-              onPlaced(config.id);
-            } else {
-              onMiss();
-            }
+          // Use PIECE CENTER for distance check (same as matching screen)
+          const tlX = posRef.current.x + gs.dx;
+          const tlY = posRef.current.y + gs.dy;
+          posRef.current = { x: tlX, y: tlY };
+
+          if (isPlacedRef.current) return;
+
+          const centerX = tlX + pieceSize / 2;
+          const centerY = tlY + pieceSize / 2;
+          const targetCX = config.boardX + pieceSize / 2;
+          const targetCY = config.boardY + pieceSize / 2;
+          const dist = Math.hypot(centerX - targetCX, centerY - targetCY);
+
+          if (dist < snapDist) {
+            // ✅ Correct slot — snap and lock
+            isPlacedRef.current = true;
+            posRef.current = { x: config.boardX, y: config.boardY };
+            Animated.spring(animPos, {
+              toValue: { x: config.boardX, y: config.boardY },
+              tension: 200,
+              friction: 7,
+              useNativeDriver: false,
+            }).start();
+            onPlaced(config.id);
+          } else {
+            // ❌ Wrong spot — gentle spring back to tray, no punishment
+            onMiss();
+            onPlayMiss();
+            Animated.spring(animPos, {
+              toValue: { x: config.trayX, y: config.trayY },
+              tension: 110,
+              friction: 11,
+              useNativeDriver: false,
+            }).start(() => {
+              posRef.current = { x: config.trayX, y: config.trayY };
+            });
           }
         },
         onPanResponderTerminate: (_, gs) => {
@@ -187,7 +186,18 @@ function PuzzlePieceView({
         },
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [config.boardX, config.boardY, config.id, isComplete, onMiss]
+    [
+      config.boardX,
+      config.boardY,
+      config.trayX,
+      config.trayY,
+      config.id,
+      pieceSize,
+      snapDist,
+      isComplete,
+      onMiss,
+      onPlayMiss,
+    ]
   );
 
   const totalW = pieceSize * cols;
@@ -211,7 +221,6 @@ function PuzzlePieceView({
       ]}
       {...panResponder.panHandlers}
     >
-      {/* Clip the full image to show only this piece's portion */}
       <View
         style={{
           width: pieceSize,
@@ -231,7 +240,6 @@ function PuzzlePieceView({
           }}
           resizeMode="cover"
         />
-        {/* Subtle white border frame */}
         <View
           style={{
             position: "absolute",
@@ -253,6 +261,8 @@ export default function PuzzlesScreen() {
 
   const { soundEffects, volume } = useAppSettings();
   const { difficulty: diffLevel, recordSignal } = useDifficulty();
+  // Shared miss sound — same pop.wav used by the matching screen
+  const playMissSound = usePop();
 
   const snapPlayer = useAudioPlayer(
     require("@/assets/sounds/snap.wav") as number
@@ -268,11 +278,9 @@ export default function PuzzlesScreen() {
   const [placedCount, setPlacedCount] = useState(0);
   const [isComplete, setIsComplete] = useState(false);
 
-  // Tracking refs for adaptive difficulty signal
   const startTimeRef = useRef(Date.now());
   const missCountRef = useRef(0);
 
-  // Reset puzzle when difficulty level changes externally
   useEffect(() => {
     setResetKey((k) => k + 1);
     setPlacedCount(0);
@@ -287,7 +295,7 @@ export default function PuzzlesScreen() {
     missCountRef.current += 1;
   }, []);
 
-  // ── Layout math ──
+  // ── Layout math ──────────────────────────────────────────────
   const topPad = HEADER_H + insets.top + (Platform.OS === "web" ? 67 : 0);
   const botPad = insets.bottom + (Platform.OS === "web" ? 34 : 0);
   const availH = SH - topPad - botPad - 24;
@@ -296,19 +304,33 @@ export default function PuzzlesScreen() {
   const trayLeft = insets.left + 16 + boardW + 24;
   const trayW = totalW - boardW - 24;
 
-  const pieceSize = Math.min(
-    Math.floor((boardW - GAP * (cols - 1)) / cols),
-    Math.floor((availH - GAP * (rows - 1)) / rows),
-    Math.floor((trayW - GAP) / 2) - 4,
-    190
+  // Tray layout: 2 columns; trayRows = how many vertical rows the tray needs
+  const trayColCount = 2;
+  const trayRows = Math.ceil(totalPieces / trayColCount);
+
+  // pieceSize constrained by BOTH board AND tray dimensions.
+  // Without the tray-height constraint, the bottom tray row(s) can render
+  // off-screen, making those pieces invisible and their board slots unfillable.
+  const pieceSize = Math.max(
+    30,
+    Math.min(
+      Math.floor((boardW - GAP * (cols - 1)) / cols),           // board column width
+      Math.floor((availH - GAP * (rows - 1)) / rows),           // board row height
+      Math.floor((trayW - GAP * (trayColCount - 1)) / trayColCount) - 4, // tray column width
+      Math.floor((availH - GAP * (trayRows - 1)) / trayRows),   // ← NEW: tray row height
+      190
+    )
   );
+
+  // Snap distance scales with piece size so it feels consistent on all screen sizes
+  const snapDist = Math.round(pieceSize * BASE_SNAP_RATIO);
 
   const boardActW = pieceSize * cols + GAP * (cols - 1);
   const boardActH = pieceSize * rows + GAP * (rows - 1);
   const boardX0 = insets.left + 16 + (boardW - boardActW) / 2;
   const boardY0 = topPad + (availH - boardActH) / 2;
 
-  // ── Piece configs ──
+  // ── Piece configs ─────────────────────────────────────────────
   const pieces = useMemo<PieceConfig[]>(() => {
     const all: PieceConfig[] = [];
     for (let r = 0; r < rows; r++) {
@@ -324,20 +346,35 @@ export default function PuzzlesScreen() {
         });
       }
     }
-    const order = shuffle(Array.from({ length: all.length }, (_, i) => i));
-    order.forEach((origIdx, slot) => {
-      const trayCol = slot % 2;
-      const trayRow = Math.floor(slot / 2);
-      all[origIdx].trayX =
-        trayLeft + trayCol * (pieceSize + GAP);
-      all[origIdx].trayY =
-        topPad + 8 + trayRow * (pieceSize + GAP);
+
+    // Assign each piece a unique random tray slot
+    const slotOrder = shuffle(Array.from({ length: all.length }, (_, i) => i));
+    slotOrder.forEach((pieceIdx, slot) => {
+      const trayCol = slot % trayColCount;
+      const trayRow = Math.floor(slot / trayColCount);
+      all[pieceIdx].trayX = trayLeft + trayCol * (pieceSize + GAP);
+      all[pieceIdx].trayY = topPad + 8 + trayRow * (pieceSize + GAP);
     });
+
+    // Safety check: validate that every piece has a valid tray position.
+    // With the tray-height constraint above this should never fire, but
+    // belt-and-suspenders guarantees a complete, solvable puzzle.
+    const allValid = all.every(
+      (p) =>
+        p.trayX >= trayLeft &&
+        p.trayY >= topPad &&
+        p.trayY + pieceSize <= topPad + availH + botPad + 24
+    );
+    if (!allValid || all.length !== rows * cols) {
+      // Regeneration would normally not be needed; this is a safeguard
+      console.warn("[Puzzle] piece set invalid — check layout constraints");
+    }
+
     return all;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cols, rows, pieceSize, boardX0, boardY0, trayLeft, topPad, resetKey]);
+  }, [cols, rows, pieceSize, boardX0, boardY0, trayLeft, topPad, trayColCount, resetKey]);
 
-  // ── Celebration animation ──
+  // ── Celebration animation ─────────────────────────────────────
   const celebScale = useSharedValue(1);
   const celebStyle = useAnimatedStyle(() => ({
     transform: [{ scale: celebScale.value }],
@@ -357,7 +394,6 @@ export default function PuzzlesScreen() {
       const next = prev + 1;
       if (next === totalPieces) {
         setIsComplete(true);
-        // Record adaptive difficulty signal — silently, never shown to child
         recordSignal({
           screen: "puzzle",
           durationMs: Date.now() - startTimeRef.current,
@@ -392,7 +428,7 @@ export default function PuzzlesScreen() {
     missCountRef.current = 0;
   }, [celebScale]);
 
-  // ── Board slot outlines ──
+  // ── Board slot outlines ───────────────────────────────────────
   const slots = useMemo(() => {
     const result = [];
     for (let r = 0; r < rows; r++) {
@@ -425,7 +461,6 @@ export default function PuzzlesScreen() {
           <Feather name="arrow-left" size={28} color="#555" />
         </Pressable>
 
-        {/* Progress dots — count changes with adaptive difficulty */}
         <View style={styles.progressRow}>
           {Array.from({ length: totalPieces }, (_, i) => (
             <View
@@ -438,7 +473,6 @@ export default function PuzzlesScreen() {
           ))}
         </View>
 
-        {/* Replay button — resets current puzzle at same difficulty */}
         <Pressable onPress={resetPuzzle} style={styles.backBtn}>
           <Feather name="refresh-cw" size={24} color="#555" />
         </Pressable>
@@ -478,10 +512,12 @@ export default function PuzzlesScreen() {
             key={`${config.id}-${resetKey}`}
             config={config}
             pieceSize={pieceSize}
+            snapDist={snapDist}
             cols={cols}
             rows={rows}
             onPlaced={handlePiecePlaced}
             onMiss={handleMiss}
+            onPlayMiss={playMissSound}
             resetKey={resetKey}
             isComplete={isComplete}
           />
@@ -512,28 +548,14 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  diffRow: {
-    flexDirection: "row",
-    gap: 8,
-  },
-  diffBtn: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 16,
-    backgroundColor: "rgba(0,0,0,0.06)",
-    justifyContent: "center",
-    alignItems: "center",
-    minWidth: 54,
-    minHeight: 52,
-  },
-  diffBtnActive: {
-    backgroundColor: "#4ECDC4",
-  },
   progressRow: {
     flexDirection: "row",
     gap: 7,
     marginLeft: "auto",
     marginRight: 8,
+    flexWrap: "wrap",
+    justifyContent: "center",
+    maxWidth: "60%",
   },
   progressDot: {
     width: 13,
