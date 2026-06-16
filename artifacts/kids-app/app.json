@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "Детское приложение",
-    "slug": "kids-app",
+    "name": "Tappo",
+    "slug": "tappo",
     "version": "1.0.0",
     "orientation": "landscape",
     "icon": "./assets/images/icon.png",
-    "scheme": "kids-app",
+    "scheme": "tappo",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
@@ -14,9 +14,12 @@
       "backgroundColor": "#FFF9F0"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.tappo.app"
     },
-    "android": {},
+    "android": {
+      "package": "com.tappo.app"
+    },
     "web": {
       "favicon": "./assets/images/icon.png"
     },

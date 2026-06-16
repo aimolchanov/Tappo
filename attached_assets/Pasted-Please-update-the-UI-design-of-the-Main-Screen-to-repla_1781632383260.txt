@@ -1,0 +1,29 @@
+Please update the UI design of the Main Screen to replace the old 3D emoji icons and the placeholder background with our new custom cut-paper gouache assets. 
+
+Here are the structural and visual changes required:
+
+1. Background Update:
+- Replace the current main screen background styling/image with the local asset named "Background .png".
+- Ensure the background uses `resizeMode: 'cover'` or `object-fit: cover` so it fills the screen beautifully. 
+- Note: The new background has a green hill at the bottom. Ensure the button grid layout floats gracefully in the center/upper section of the screen so it doesn't collide text-wise with the decorative flowers at the bottom.
+
+2. Button Style Overhaul:
+- REMOVE the solid, brightly colored background circles from the buttons (the old red, purple, yellow, teal circles). The new icons are already rich and colorful art pieces and should sit directly on the new cream background.
+- Keep the touch target area large (at least 90x90 pt) for precise child interaction.
+- Center the new images inside each button container.
+- Keep the text labels underneath the images, using a warm brown color (`#4A3728`) and a clean, rounded, bold font style to match the aesthetic.
+
+3. Icon Asset Mapping:
+Update the icon image sources for the 6 main modules using the following exact file names:
+- Module "Раскраски" (Coloring) -> Source: "1. colouring.PNG"
+- Module "Рисование" (Painting) -> Source: "2. painting.PNG"
+- Module "Музыка" (Music) -> Source: "3. music.PNG"
+- Module "Пазлы" (Puzzle) -> Source: "4. puzzle.PNG"
+- Module "Найди пару" (Find a Pair) -> Source: "5. pair.PNG"
+- Module "Мои работы" (My Works) -> Source: "6. my-works.PNG"
+
+4. Layout Polish:
+- Ensure all 6 buttons are arranged in a clean, balanced grid (e.g., 2 columns x 3 rows, or 3 columns x 2 rows depending on current screen orientation orientation) that looks well-spaced and uniform.
+- Add a gentle scale animation (bounce/squish effect) when a button is pressed to give tactical feedback to the child.
+
+Please run the app and verify that all assets load correctly without any missing file errors.
