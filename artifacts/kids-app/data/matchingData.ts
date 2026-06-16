@@ -34,16 +34,21 @@ export interface ColorPuzzle {
 }
 
 // ─── Color palette ─────────────────────────────────────────────────
-// Яркие, хорошо различимые цвета. Первые 3 — максимально контрастные
-// (красный, жёлтый, синий — первичные, самые понятные малышам).
-const COLORS = [
-  { key: "red",    hex: "#FF4757" },
-  { key: "yellow", hex: "#FFD32A" },
-  { key: "blue",   hex: "#45AAF2" },
-  { key: "green",  hex: "#26DE81" },
-  { key: "purple", hex: "#A29BFE" },
-  { key: "orange", hex: "#FD9644" },
+// Дизайн-системные цвета: первые 3 — всегда для Level 1 (фиксировано).
+// Level 2/3 добавляют цвета из расширенной палитры ниже.
+const LEVEL1_COLORS = [
+  { key: "coral",  hex: "#FF6B6B" },
+  { key: "yellow", hex: "#FFD93D" },
+  { key: "teal",   hex: "#4ECDC4" },
 ] as const;
+
+const EXTRA_COLORS = [
+  { key: "purple", hex: "#C77DFF" },
+  { key: "orange", hex: "#FF9F43" },
+  { key: "green",  hex: "#6BCB50" },
+] as const;
+
+const COLORS = [...LEVEL1_COLORS, ...EXTRA_COLORS] as const;
 
 // ─── Difficulty config ──────────────────────────────────────────────
 // itemsPerColor одинаково для каждого цвета → никаких «ошибок»-перекосов.
@@ -74,8 +79,12 @@ function uid() {
 // ─── Generator ─────────────────────────────────────────────────────
 export function generateColorPuzzle(level: DiffLevel): ColorPuzzle {
   const cfg = MATCHING_CONFIG[level];
-  // Shuffle and pick N colors; use slice of full palette
-  const chosenColors = shuffle(COLORS).slice(0, cfg.numColors);
+  // Level 1: always Coral + Yellow + Teal (fixed design-system colors).
+  // Level 2+: shuffle the full palette and take N.
+  const chosenColors: Array<{ key: string; hex: string }> =
+    level === 1
+      ? shuffle(LEVEL1_COLORS)
+      : shuffle(COLORS).slice(0, cfg.numColors);
 
   const targets: MatchTarget[] = chosenColors.map((c) => ({
     id: `target_${c.key}_${uid()}`,

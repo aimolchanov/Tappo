@@ -12,10 +12,10 @@ import React, {
 import {
   Animated,
   Dimensions,
+  ImageBackground,
   Platform,
   Pressable,
   StyleSheet,
-  Text,
   View,
 } from "react-native";
 import Reanimated, {
@@ -26,7 +26,6 @@ import Reanimated, {
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { MatchingMascot, type MascotMood } from "@/components/MatchingMascot";
 import { useDifficulty } from "@/contexts/DifficultyContext";
 import { useAppSettings } from "@/contexts/SettingsContext";
 import {
@@ -36,30 +35,26 @@ import {
 } from "@/data/matchingData";
 import { usePop } from "@/hooks/usePopSound";
 
-// ─── Layout constants ─────────────────────────────────────────────
+const GAMES_BG = require("@/assets/images/games_background.png");
 const HEADER_H = 68;
-const BASKET_V_PAD = 20;
-const BASKET_GAP = 22;
-const ITEM_H_GAP = 16;
-const ITEM_V_GAP = 20;
-const ITEM_AREA_TOP_PAD = 28;
-const SNAP_DIST = 88;
 
-// ─── Target with computed center ──────────────────────────────────
+// ─── Target + computed center ─────────────────────────────────────
 interface TargetWithPos extends MatchTarget {
   centerX: number;
   centerY: number;
 }
 
-// ─── Basket — rounded-rectangle container ─────────────────────────
-function BasketView({
+// ─── Solid colored rounded-rect target slot ───────────────────────
+function TargetSlot({
   target,
-  size,
+  w,
+  h,
   matchCount,
   itemsPerColor,
 }: {
   target: TargetWithPos;
-  size: number;
+  w: number;
+  h: number;
   matchCount: number;
   itemsPerColor: number;
 }) {
@@ -68,82 +63,62 @@ function BasketView({
   useEffect(() => {
     if (matchCount > 0) {
       scale.value = withSequence(
-        withSpring(1.16, { damping: 3, stiffness: 480 }),
+        withSpring(1.15, { damping: 3, stiffness: 500 }),
         withSpring(1.0, { damping: 7 })
       );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matchCount]);
 
+  const isFilled = matchCount >= itemsPerColor;
+  const R = Math.round(h * 0.32);
+  const checkR = Math.round(h * 0.25);
+
   const animStyle = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],
   }));
 
-  const isFilled = matchCount >= itemsPerColor;
-  const hasAny = matchCount > 0;
-  const R = Math.round(size * 0.22); // rounded-rect radius — NOT a circle
-
   return (
     <Reanimated.View style={animStyle}>
-      {/* Outer container — reads clearly as a "tray / drop zone" */}
       <View
-        style={[
-          styles.basket,
-          {
-            width: size,
-            height: size,
-            borderRadius: R,
-            backgroundColor: hasAny ? target.color : "#FFF8F0",
-            borderWidth: isFilled ? 0 : 3.5,
-            borderColor: target.color,
-            borderStyle: isFilled ? "solid" : "dashed",
-            shadowColor: target.color,
-            shadowOffset: { width: 0, height: hasAny ? 6 : 3 },
-            shadowOpacity: hasAny ? 0.55 : 0.25,
-            shadowRadius: hasAny ? 12 : 6,
-            elevation: hasAny ? 14 : 5,
-          },
-        ]}
+        style={{
+          width: w,
+          height: h,
+          borderRadius: R,
+          backgroundColor: target.color,
+          justifyContent: "center",
+          alignItems: "center",
+          shadowColor: target.color,
+          shadowOffset: { width: 0, height: 6 },
+          shadowOpacity: 0.5,
+          shadowRadius: 14,
+          elevation: 10,
+        }}
       >
-        {/* Empty state: colored inner "drop-here" circle */}
-        {!hasAny && (
+        {isFilled && (
           <View
             style={{
-              width: size * 0.46,
-              height: size * 0.46,
-              borderRadius: (size * 0.46) / 2,
-              backgroundColor: target.color,
-              opacity: 0.22,
-            }}
-          />
-        )}
-
-        {/* Partially filled: subtle count badge */}
-        {hasAny && !isFilled && itemsPerColor > 1 && (
-          <Text
-            style={{
-              color: "rgba(255,255,255,0.9)",
-              fontSize: size * 0.3,
-              fontWeight: "700",
+              width: checkR * 2,
+              height: checkR * 2,
+              borderRadius: checkR,
+              backgroundColor: "rgba(255,255,255,0.32)",
+              justifyContent: "center",
+              alignItems: "center",
             }}
           >
-            {matchCount}/{itemsPerColor}
-          </Text>
-        )}
-
-        {/* Fully filled: white checkmark */}
-        {isFilled && (
-          <Text style={{ fontSize: size * 0.42, color: "#fff" }}>✓</Text>
+            <Feather name="check" size={Math.round(h * 0.28)} color="#fff" />
+          </View>
         )}
       </View>
     </Reanimated.View>
   );
 }
 
-// ─── Draggable item — neutral circle + colored inner dot ──────────
-interface DraggableItemProps {
+// ─── Draggable cream-card token ───────────────────────────────────
+interface DraggableTokenProps {
   item: MatchItem;
-  size: number;
+  cardSize: number;
+  innerSize: number;
   originX: number;
   originY: number;
   targets: TargetWithPos[];
@@ -155,9 +130,10 @@ interface DraggableItemProps {
   resetKey: number;
 }
 
-function DraggableColorItem({
+function DraggableToken({
   item,
-  size,
+  cardSize,
+  innerSize,
   originX,
   originY,
   targets,
@@ -167,13 +143,13 @@ function DraggableColorItem({
   onPlayMiss,
   isComplete,
   resetKey,
-}: DraggableItemProps) {
+}: DraggableTokenProps) {
+  const { PanResponder } = require("react-native");
+
   const posRef = useRef({ x: originX, y: originY });
   const animPos = useRef(
     new Animated.ValueXY({ x: originX, y: originY })
   ).current;
-  // Scales down to ~0.62 once dropped in basket (stays visible under basket)
-  const itemScale = useRef(new Animated.Value(1)).current;
   const isMatchedRef = useRef(false);
   const [isDragging, setIsDragging] = useState(false);
 
@@ -181,11 +157,10 @@ function DraggableColorItem({
     isMatchedRef.current = false;
     posRef.current = { x: originX, y: originY };
     animPos.setValue({ x: originX, y: originY });
-    itemScale.setValue(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resetKey, originX, originY]);
 
-  const { PanResponder } = require("react-native");
+  const snapDist = Math.max(80, cardSize * 0.9);
 
   const panResponder = useMemo(
     () =>
@@ -211,9 +186,8 @@ function DraggableColorItem({
           setIsDragging(false);
           animPos.flattenOffset();
 
-          // Use ITEM CENTER (not top-left) for distance comparison
-          const itemCenterX = posRef.current.x + gs.dx + size / 2;
-          const itemCenterY = posRef.current.y + gs.dy + size / 2;
+          const cx = posRef.current.x + gs.dx + cardSize / 2;
+          const cy = posRef.current.y + gs.dy + cardSize / 2;
           posRef.current = {
             x: posRef.current.x + gs.dx,
             y: posRef.current.y + gs.dy,
@@ -222,14 +196,11 @@ function DraggableColorItem({
           if (isMatchedRef.current) return;
 
           let bestTarget: TargetWithPos | null = null;
-          let bestDist = SNAP_DIST;
+          let bestDist = snapDist;
 
           for (const t of targets) {
             if (t.colorKey !== item.colorKey) continue;
-            const dist = Math.hypot(
-              itemCenterX - t.centerX,
-              itemCenterY - t.centerY
-            );
+            const dist = Math.hypot(cx - t.centerX, cy - t.centerY);
             if (dist < bestDist) {
               bestDist = dist;
               bestTarget = t;
@@ -237,29 +208,20 @@ function DraggableColorItem({
           }
 
           if (bestTarget) {
-            // ✅ Match — snap item center to basket center, then scale down
             isMatchedRef.current = true;
             Animated.spring(animPos, {
               toValue: {
-                x: bestTarget.centerX - size / 2,
-                y: bestTarget.centerY - size / 2,
+                x: bestTarget.centerX - cardSize / 2,
+                y: bestTarget.centerY - cardSize / 2,
               },
               tension: 220,
               friction: 7,
               useNativeDriver: false,
-            }).start(() => {
-              Animated.spring(itemScale, {
-                toValue: 0.62,
-                tension: 200,
-                friction: 8,
-                useNativeDriver: false,
-              }).start();
-            });
+            }).start();
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
             onPlaySnap();
             onMatch(item.id, bestTarget.id);
           } else {
-            // ❌ Miss — spring back silently
             onMiss();
             onPlayMiss();
             Animated.spring(animPos, {
@@ -291,49 +253,45 @@ function DraggableColorItem({
       item.colorKey,
       item.id,
       isComplete,
-      size,
+      cardSize,
+      snapDist,
       ...targets.map((t) => t.id),
     ]
   );
 
-  const innerSize = size * 0.68;
-
   return (
     <Animated.View
       style={[
-        styles.itemAbsolute,
+        styles.tokenAbsolute,
         {
-          width: size,
-          height: size,
-          borderRadius: size / 2,
+          width: cardSize,
+          height: cardSize,
+          borderRadius: cardSize / 2,
           zIndex: isDragging ? 300 : 20,
-          transform: [
-            ...animPos.getTranslateTransform(),
-            { scale: itemScale },
-          ],
-          shadowColor: item.color,
-          shadowOffset: { width: 0, height: isDragging ? 10 : 4 },
-          shadowOpacity: isDragging ? 0.45 : 0.2,
-          shadowRadius: isDragging ? 18 : 8,
-          elevation: isDragging ? 18 : 4,
+          transform: animPos.getTranslateTransform(),
+          shadowColor: "#000",
+          shadowOffset: { width: 0, height: isDragging ? 12 : 4 },
+          shadowOpacity: isDragging ? 0.28 : 0.12,
+          shadowRadius: isDragging ? 20 : 8,
+          elevation: isDragging ? 20 : 4,
         },
       ]}
       {...panResponder.panHandlers}
     >
-      {/* Neutral cream outer circle — no color hint */}
+      {/* Cream card outer */}
       <View
         style={{
-          width: size,
-          height: size,
-          borderRadius: size / 2,
-          backgroundColor: "#FFF8F0",
-          borderWidth: 3,
-          borderColor: "rgba(255,255,255,0.9)",
+          width: cardSize,
+          height: cardSize,
+          borderRadius: cardSize / 2,
+          backgroundColor: "#FFF7ED",
           justifyContent: "center",
           alignItems: "center",
+          borderWidth: 3,
+          borderColor: "rgba(255,255,255,0.85)",
         }}
       >
-        {/* Large solid colored inner circle — this IS the item */}
+        {/* Solid colored disk */}
         <View
           style={{
             width: innerSize,
@@ -351,7 +309,6 @@ function DraggableColorItem({
 export default function MatchingScreen() {
   const insets = useSafeAreaInsets();
   const { width: SW, height: SH } = Dimensions.get("window");
-
   const { soundEffects, volume } = useAppSettings();
   const { difficulty: diffLevel, recordSignal } = useDifficulty();
   const playPop = usePop();
@@ -368,7 +325,6 @@ export default function MatchingScreen() {
   const [puzzle, setPuzzle] = useState(() => generateColorPuzzle(diffLevel));
   const [matchCounts, setMatchCounts] = useState<Record<string, number>>({});
   const [matchedItems, setMatchedItems] = useState<Record<string, boolean>>({});
-  const [mascotMood, setMascotMood] = useState<MascotMood>("idle");
 
   const startTimeRef = useRef(Date.now());
   const missCountRef = useRef(0);
@@ -379,7 +335,6 @@ export default function MatchingScreen() {
     setPuzzle(newPuzzle);
     setMatchCounts({});
     setMatchedItems({});
-    setMascotMood("idle");
     startTimeRef.current = Date.now();
     missCountRef.current = 0;
     hitCountRef.current = 0;
@@ -390,7 +345,6 @@ export default function MatchingScreen() {
   const matchedCount = Object.keys(matchedItems).length;
   const isComplete = matchedCount === totalItems;
 
-  // Items per color (all levels use same count per color)
   const { itemsPerColor } = useMemo(() => {
     const cfg = { 1: 1, 2: 2, 3: 2 } as const;
     return { itemsPerColor: cfg[diffLevel as 1 | 2 | 3] ?? 1 };
@@ -411,20 +365,17 @@ export default function MatchingScreen() {
     playPop();
   }, [playPop, soundEffects]);
 
-  // ── Match / miss handlers ─────────────────────────────────────
+  // ── Match handler ─────────────────────────────────────────────
   const handleMatch = useCallback(
     (itemId: string, targetId: string) => {
       hitCountRef.current += 1;
-
       setMatchCounts((prev) => ({
         ...prev,
         [targetId]: (prev[targetId] ?? 0) + 1,
       }));
       setMatchedItems((prev) => {
         const next = { ...prev, [itemId]: true };
-
         if (Object.keys(next).length === totalItems) {
-          setMascotMood("celebrate");
           recordSignal({
             screen: "matching",
             durationMs: Date.now() - startTimeRef.current,
@@ -441,23 +392,17 @@ export default function MatchingScreen() {
             }
           }, 180);
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-
           setTimeout(() => {
             const newPuzzle = generateColorPuzzle(diffLevel);
             setPuzzle(newPuzzle);
             setMatchCounts({});
             setMatchedItems({});
-            setMascotMood("idle");
             startTimeRef.current = Date.now();
             missCountRef.current = 0;
             hitCountRef.current = 0;
             setResetKey((k) => k + 1);
           }, 1400);
-        } else {
-          setMascotMood("happy");
-          setTimeout(() => setMascotMood("idle"), 1000);
         }
-
         return next;
       });
     },
@@ -468,120 +413,118 @@ export default function MatchingScreen() {
     missCountRef.current += 1;
   }, []);
 
-  // ── Shuffle / new puzzle ──────────────────────────────────────
   const reshufflePuzzle = useCallback(() => {
     const newPuzzle = generateColorPuzzle(diffLevel);
     setPuzzle(newPuzzle);
     setMatchCounts({});
     setMatchedItems({});
-    setMascotMood("idle");
     startTimeRef.current = Date.now();
     missCountRef.current = 0;
     hitCountRef.current = 0;
     setResetKey((k) => k + 1);
   }, [diffLevel]);
 
-  // ── Layout ────────────────────────────────────────────────────
+  // ── Layout dimensions ─────────────────────────────────────────
   const webOff = Platform.OS === "web" ? 67 : 0;
   const topSafe = insets.top + webOff;
   const botSafe = insets.bottom + (Platform.OS === "web" ? 34 : 0);
   const sideSafe = insets.left;
 
-  const BASKET_SIZE = Math.max(Math.min(Math.floor(SW / 5.8), 130), 70);
-  const ITEM_SIZE = Math.max(Math.min(Math.floor(SW / 7), 108), 58);
+  const contentTop = topSafe + HEADER_H;
+  const contentH = SH - contentTop - botSafe;
 
-  const headerBottom = topSafe + HEADER_H;
-  const basketCenterY = headerBottom + BASKET_V_PAD + BASKET_SIZE / 2;
-  const basketAreaBottom =
-    headerBottom + BASKET_V_PAD + BASKET_SIZE + BASKET_V_PAD;
+  // Target: solid colored wide rounded-rect
+  const TARGET_W = Math.max(Math.min(Math.floor(SW / 5.2), 170), 90);
+  const TARGET_H = Math.round(TARGET_W * 0.65);
+  const TARGET_GAP = Math.max(18, Math.floor(SW * 0.038));
 
-  const itemAreaTop = basketAreaBottom + ITEM_AREA_TOP_PAD;
-  const itemAreaH = SH - itemAreaTop - botSafe - 16;
+  // Token: cream circle card
+  const CARD_SIZE = Math.max(Math.min(Math.floor(SW / 6.5), 140), 78);
+  const INNER_SIZE = Math.round(CARD_SIZE * 0.66);
+  const CARD_GAP = Math.max(18, Math.floor(SW * 0.038));
 
-  // Basket positions — centered row
+  // Target row centered at 28% of content height
   const numTargets = puzzle.targets.length;
-  const totalBasketW = numTargets * BASKET_SIZE + (numTargets - 1) * BASKET_GAP;
-  const basketStartX = sideSafe + (SW - totalBasketW) / 2;
+  const totalTargetW = numTargets * TARGET_W + (numTargets - 1) * TARGET_GAP;
+  const targetStartX = sideSafe + (SW - sideSafe * 2 - totalTargetW) / 2 + sideSafe;
+  const targetCenterY = contentTop + contentH * 0.26;
 
   const targets: TargetWithPos[] = puzzle.targets.map((t, i) => ({
     ...t,
-    centerX: basketStartX + i * (BASKET_SIZE + BASKET_GAP) + BASKET_SIZE / 2,
-    centerY: basketCenterY,
+    centerX: targetStartX + i * (TARGET_W + TARGET_GAP) + TARGET_W / 2,
+    centerY: targetCenterY,
   }));
 
-  // Item positions — single row for ≤3, 2-row grid for more
-  const itemPositions: Array<{ x: number; y: number }> = useMemo(() => {
+  // Token positions — single row for ≤4, 2-row grid for more
+  const tokenPositions = useMemo(() => {
     const n = puzzle.items.length;
-    const perRow = n <= 3 ? n : Math.ceil(n / 2);
+    const perRow = n <= 4 ? n : Math.ceil(n / 2);
     const numRows = Math.ceil(n / perRow);
 
-    const totalGridH =
-      numRows * ITEM_SIZE + Math.max(0, numRows - 1) * ITEM_V_GAP;
-    const gridStartY = itemAreaTop + Math.max(0, (itemAreaH - totalGridH) / 2);
+    const tokenAreaCenterY = contentTop + contentH * 0.73;
+    const totalGridH = numRows * CARD_SIZE + Math.max(0, numRows - 1) * CARD_GAP;
+    const gridStartY = tokenAreaCenterY - totalGridH / 2;
 
     const positions: Array<{ x: number; y: number }> = [];
-
     for (let r = 0; r < numRows; r++) {
       const rowStart = r * perRow;
       const rowEnd = Math.min(rowStart + perRow, n);
       const rowCount = rowEnd - rowStart;
-      const rowW = rowCount * ITEM_SIZE + (rowCount - 1) * ITEM_H_GAP;
-      const rowStartX = sideSafe + (SW - rowW) / 2;
-      const rowCenterY = gridStartY + r * (ITEM_SIZE + ITEM_V_GAP) + ITEM_SIZE / 2;
-
+      const rowW = rowCount * CARD_SIZE + (rowCount - 1) * CARD_GAP;
+      const rowX = sideSafe + (SW - sideSafe * 2 - rowW) / 2 + sideSafe;
+      const rowY = gridStartY + r * (CARD_SIZE + CARD_GAP);
       for (let c = 0; c < rowCount; c++) {
         positions.push({
-          x: rowStartX + c * (ITEM_SIZE + ITEM_H_GAP),
-          y: rowCenterY,
+          x: rowX + c * (CARD_SIZE + CARD_GAP),
+          y: rowY,
         });
       }
     }
-
     return positions;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [puzzle.items.length, ITEM_SIZE, itemAreaTop, itemAreaH, SW, sideSafe]);
+  }, [
+    puzzle.items.length,
+    CARD_SIZE,
+    CARD_GAP,
+    contentTop,
+    contentH,
+    SW,
+    sideSafe,
+  ]);
 
   return (
-    <View
-      style={[
-        styles.root,
-        { paddingLeft: insets.left, paddingRight: insets.right },
-      ]}
-    >
-      {/* ── Background blobs ── */}
-      <View style={styles.bgBlob1} pointerEvents="none" />
-      <View style={styles.bgBlob2} pointerEvents="none" />
-
-      {/* ── Header — back + shuffle only, no progress dots ── */}
+    <ImageBackground source={GAMES_BG} style={styles.root} resizeMode="cover">
+      {/* ── Header ── */}
       <View
         style={[
           styles.header,
-          { top: topSafe, height: HEADER_H, left: insets.left, right: insets.right },
+          {
+            top: topSafe,
+            height: HEADER_H,
+            left: insets.left,
+            right: insets.right,
+          },
         ]}
       >
         <Pressable onPress={() => router.back()} style={styles.headerBtn}>
-          <Feather name="arrow-left" size={28} color="#8A7060" />
+          <Feather name="arrow-left" size={28} color="#6B5B4E" />
         </Pressable>
-
         <View style={{ flex: 1 }} />
-
         <Pressable onPress={reshufflePuzzle} style={styles.headerBtn}>
-          <Feather name="shuffle" size={24} color="#8A7060" />
+          <Feather name="shuffle" size={24} color="#6B5B4E" />
         </Pressable>
       </View>
 
-      {/* ── Draggable items — rendered FIRST, baskets appear on top ── */}
+      {/* ── Tokens (rendered first — lower z-order) ── */}
       {puzzle.items.map((item, idx) => {
-        const pos = itemPositions[idx] ?? { x: 40, y: itemAreaTop + 20 };
-        const ox = pos.x;
-        const oy = pos.y - ITEM_SIZE / 2;
+        const pos = tokenPositions[idx] ?? { x: 40, y: contentTop + 20 };
         return (
-          <DraggableColorItem
+          <DraggableToken
             key={`${item.id}-${resetKey}`}
             item={item}
-            size={ITEM_SIZE}
-            originX={ox}
-            originY={oy}
+            cardSize={CARD_SIZE}
+            innerSize={INNER_SIZE}
+            originX={pos.x}
+            originY={pos.y}
             targets={targets}
             onMatch={handleMatch}
             onMiss={handleMiss}
@@ -593,39 +536,27 @@ export default function MatchingScreen() {
         );
       })}
 
-      {/* ── Baskets — rendered AFTER items so they sit on top ── */}
+      {/* ── Target slots (rendered above tokens) ── */}
       {targets.map((t) => (
         <View
           key={t.id}
           style={{
             position: "absolute",
-            left: t.centerX - BASKET_SIZE / 2,
-            top: t.centerY - BASKET_SIZE / 2,
+            left: t.centerX - TARGET_W / 2,
+            top: t.centerY - TARGET_H / 2,
             zIndex: 50,
           }}
         >
-          <BasketView
+          <TargetSlot
             target={t}
-            size={BASKET_SIZE}
+            w={TARGET_W}
+            h={TARGET_H}
             matchCount={matchCounts[t.id] ?? 0}
             itemsPerColor={itemsPerColor}
           />
         </View>
       ))}
-
-      {/* ── Mascot ── */}
-      <View
-        style={[
-          styles.mascotCorner,
-          { bottom: botSafe + 20, right: insets.right + 20 },
-        ]}
-      >
-        <MatchingMascot
-          mood={mascotMood}
-          size={Math.min(BASKET_SIZE * 0.68, 72)}
-        />
-      </View>
-    </View>
+    </ImageBackground>
   );
 }
 
@@ -633,28 +564,7 @@ export default function MatchingScreen() {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: "#FFF7ED",
     overflow: "hidden",
-  },
-  bgBlob1: {
-    position: "absolute",
-    width: 300,
-    height: 300,
-    borderRadius: 150,
-    backgroundColor: "#FFE5C8",
-    opacity: 0.35,
-    top: -70,
-    right: -80,
-  },
-  bgBlob2: {
-    position: "absolute",
-    width: 240,
-    height: 240,
-    borderRadius: 120,
-    backgroundColor: "#C8EFE8",
-    opacity: 0.28,
-    bottom: -50,
-    left: -60,
   },
   header: {
     position: "absolute",
@@ -668,16 +578,10 @@ const styles = StyleSheet.create({
     height: 48,
     justifyContent: "center",
     alignItems: "center",
+    borderRadius: 24,
+    backgroundColor: "rgba(255,255,255,0.55)",
   },
-  basket: {
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  itemAbsolute: {
+  tokenAbsolute: {
     position: "absolute",
-  },
-  mascotCorner: {
-    position: "absolute",
-    zIndex: 50,
   },
 });

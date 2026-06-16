@@ -1,0 +1,26 @@
+Please completely redesign the "Find a Pair" (Найди пару) mini-game screen and update the background asset globally for ALL inner game/module screens. 
+
+Follow these exact requirements:
+
+1. Global Background Update for Inner Screens:
+- For ALL gameplay and inner screens (Coloring/Раскраски, Painting/Рисование, Music/Музыка, Puzzles/Пазлы, Find a Pair/Найди пару, My Works/Мои работы), replace their current backgrounds with the new local asset named "games background.png".
+- Ensure it uses `resizeMode: 'cover'` (or object-fit: cover) to fill the horizontal tablet view seamlessly. 
+- Note: The Main Menu screen should NOT change—it must keep its own "Background .png" with the green hill.
+
+2. "Find a Pair" Layout & Proportions (Strict 1:1 Matching):
+- REMOVE the current broken 3x2 grid of 6 tokens. There should be NO duplicate colors or elements.
+- The screen must have a clean 1:1 ratio: exactly 3 fixed Targets at the top row, and exactly 3 draggable Tokens at the bottom row.
+- Arrange both rows horizontally, beautifully centered and spaced out across the new "games background.png".
+
+3. Visual Styling for "Find a Pair":
+- REMOVE all ugly dashed borders, grids, and pale inner placeholder circles.
+- For Level 1 (Color Match), use our 3 distinct design system colors: Coral (`#FF6B6B`), Yellow (`#FFD93D`), and Teal/Turquoise (`#4ECDC4`).
+- Top Row (Targets): 3 clean, solid-colored rounded shapes representing the 3 target colors.
+- Bottom Row (Tokens): 3 beautiful, solid-colored circular disks (Coral, Yellow, Teal) sitting on neutral, identical cream-colored card backgrounds (`#FFF7ED`) so the color doesn't leak beforehand.
+
+4. Drag & Drop Logic:
+- Make the 3 bottom tokens draggable using React Native Gesture Handler or Skia touch handling.
+- Success Match: When a token is dropped onto the target with the MATCHING color, it should snap perfectly into the center of that target and lock.
+- Mismatch Fail: If a token is dropped onto the WRONG color, trigger a soft placeholder sound effect hook and make the token smoothly animate (slide/bounce) back to its original position in the bottom row. No negative visual indicators like red crosses.
+
+Please apply these changes, install any required gesture modules if missing, and refresh the app preview.

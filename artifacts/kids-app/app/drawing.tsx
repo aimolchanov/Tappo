@@ -18,6 +18,7 @@ import React, {
 import {
   Alert,
   Animated,
+  ImageBackground,
   Platform,
   PanResponder,
   Pressable,
@@ -25,6 +26,7 @@ import {
   Text,
   View,
 } from "react-native";
+
 import {
   Canvas,
   Path,
@@ -38,6 +40,8 @@ import Reanimated, {
   withSpring,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+const GAMES_BG = require("@/assets/images/games_background.png");
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 // Edit these to change the palette and brush sizes.
@@ -387,7 +391,9 @@ function DrawingScreenNative() {
   const bottomPad = insets.bottom + (Platform.OS === "web" ? 34 : 0);
 
   return (
-    <View
+    <ImageBackground
+      source={GAMES_BG}
+      resizeMode="cover"
       style={[
         styles.screen,
         {
@@ -502,7 +508,7 @@ function DrawingScreenNative() {
           ))}
         </View>
       </View>
-    </View>
+    </ImageBackground>
   );
 }
 
@@ -510,7 +516,6 @@ function DrawingScreenNative() {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#EFEFEF",
   },
 
   // Top bar

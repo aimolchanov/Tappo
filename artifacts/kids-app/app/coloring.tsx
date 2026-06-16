@@ -3,6 +3,7 @@ import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
+  ImageBackground,
   Platform,
   Pressable,
   ScrollView,
@@ -10,6 +11,7 @@ import {
   Text,
   View,
 } from "react-native";
+
 import Reanimated, {
   useAnimatedStyle,
   useSharedValue,
@@ -27,6 +29,8 @@ import {
 import { usePop } from "@/hooks/usePopSound";
 import { useDifficulty } from "@/contexts/DifficultyContext";
 import { LEVEL_TO_MAX_COLORING } from "@/constants/difficulty";
+
+const GAMES_BG = require("@/assets/images/games_background.png");
 
 const PALETTE = [
   "#FF4444",
@@ -269,7 +273,9 @@ export default function ColoringScreen() {
   };
 
   return (
-    <View
+    <ImageBackground
+      source={GAMES_BG}
+      resizeMode="cover"
       style={[
         styles.container,
         {
@@ -277,7 +283,6 @@ export default function ColoringScreen() {
           paddingBottom: insets.bottom + (Platform.OS === "web" ? 34 : 0),
           paddingLeft: insets.left,
           paddingRight: insets.right,
-          backgroundColor: currentImage.bgColor,
         },
       ]}
     >
@@ -328,7 +333,7 @@ export default function ColoringScreen() {
           />
         ))}
       </View>
-    </View>
+    </ImageBackground>
   );
 }
 

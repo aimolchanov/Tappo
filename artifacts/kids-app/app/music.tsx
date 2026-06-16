@@ -5,11 +5,13 @@ import { router } from "expo-router";
 import { useAppSettings } from "@/contexts/SettingsContext";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
+  ImageBackground,
   Platform,
   Pressable,
   StyleSheet,
   View,
 } from "react-native";
+
 import Reanimated, {
   useAnimatedStyle,
   useSharedValue,
@@ -20,6 +22,8 @@ import Reanimated, {
   withTiming,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+const GAMES_BG = require("@/assets/images/games_background.png");
 
 // ─── Note definitions ──────────────────────────────────────────
 // Звуковые файлы лежат в artifacts/kids-app/assets/sounds/
@@ -221,7 +225,9 @@ export default function MusicScreen() {
   };
 
   return (
-    <View
+    <ImageBackground
+      source={GAMES_BG}
+      resizeMode="cover"
       style={[
         styles.container,
         {
@@ -277,14 +283,13 @@ export default function MusicScreen() {
           ))}
         </View>
       </View>
-    </View>
+    </ImageBackground>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#16162A",
   },
 
   // ── Header ──

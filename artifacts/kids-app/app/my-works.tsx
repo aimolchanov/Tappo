@@ -8,6 +8,7 @@ import {
   Alert,
   FlatList,
   Image,
+  ImageBackground,
   Modal,
   Platform,
   Pressable,
@@ -16,9 +17,12 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
+
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { usePop } from "@/hooks/usePopSound";
+
+const GAMES_BG = require("@/assets/images/games_background.png");
 
 const SAVE_DIR = (FileSystem.documentDirectory ?? "") + "my_works/";
 const ACCENT = "#F59E0B";
@@ -186,7 +190,9 @@ export default function MyWorksScreen() {
   );
 
   return (
-    <View
+    <ImageBackground
+      source={GAMES_BG}
+      resizeMode="cover"
       style={[
         styles.root,
         {
@@ -249,14 +255,13 @@ export default function MyWorksScreen() {
           onDelete={() => handleDelete(selected)}
         />
       )}
-    </View>
+    </ImageBackground>
   );
 }
 
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: "#FFF8F0",
   },
   header: {
     flexDirection: "row",

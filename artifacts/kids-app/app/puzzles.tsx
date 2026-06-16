@@ -11,12 +11,14 @@ import {
   Animated,
   Dimensions,
   Image,
+  ImageBackground,
   PanResponder,
   Platform,
   Pressable,
   StyleSheet,
   View,
 } from "react-native";
+
 import Reanimated, {
   useAnimatedStyle,
   useSharedValue,
@@ -25,6 +27,8 @@ import Reanimated, {
   withTiming,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+const GAMES_BG = require("@/assets/images/games_background.png");
 
 // ─── Config ──────────────────────────────────────────────────────
 const PUZZLE_IMAGE = require("@/assets/images/puzzle_1.png");
@@ -444,7 +448,9 @@ export default function PuzzlesScreen() {
   }, [rows, cols, boardX0, boardY0, pieceSize]);
 
   return (
-    <View
+    <ImageBackground
+      source={GAMES_BG}
+      resizeMode="cover"
       style={[
         styles.container,
         {
@@ -523,7 +529,7 @@ export default function PuzzlesScreen() {
           />
         ))}
       </Reanimated.View>
-    </View>
+    </ImageBackground>
   );
 }
 
@@ -531,7 +537,6 @@ export default function PuzzlesScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#F5F0E8",
   },
   header: {
     height: HEADER_H,
