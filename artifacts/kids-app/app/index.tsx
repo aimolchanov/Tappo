@@ -25,7 +25,6 @@ import { LEVEL_TO_BTN_SCALE } from "@/constants/difficulty";
 
 // ─── Design tokens ────────────────────────────────────────────────
 const BG = "#FFF7ED";
-const TEXT_DARK = "#4A3728";
 
 type Route =
   | "/coloring"
@@ -41,8 +40,12 @@ interface Activity {
   gradient: [string, string];
   shadow: string;
   route: Route;
+  /** When true, the button gets a subtle ring to signal it's a "viewer", not a creator */
+  isGallery?: boolean;
 }
 
+// Top row  — «создавать»: Раскраски · Рисование · Музыка
+// Bottom row — «играть»:  Пазлы · Найди пару · Мои работы (gallery, visually distinct)
 const ACTIVITIES: Activity[] = [
   {
     emoji: "🎨",
@@ -73,18 +76,20 @@ const ACTIVITIES: Activity[] = [
     route: "/puzzles",
   },
   {
-    emoji: "⭐",
-    label: "Мои работы",
-    gradient: ["#B8E8CC", "#95D5B2"],
-    shadow: "#95D5B2",
-    route: "/my-works",
-  },
-  {
-    emoji: "🔀",
+    emoji: "🌈",
     label: "Найди пару",
     gradient: ["#FFB3C6", "#FF6B9D"],
     shadow: "#FF6B9D",
     route: "/matching",
+  },
+  {
+    emoji: "⭐",
+    label: "Мои работы",
+    // Softer, cooler gradient — reads as "passive / gallery", not "active / create"
+    gradient: ["#C8E6D8", "#8BBDA8"],
+    shadow: "#8BBDA8",
+    route: "/my-works",
+    isGallery: true,
   },
 ];
 
@@ -105,14 +110,12 @@ function ActivityButton({
   }));
 
   const handlePressIn = () => {
-    // Squash: widen + flatten → feels like you're pressing it into a surface
     scaleX.value = withSpring(1.10, { damping: 12, stiffness: 500 });
     scaleY.value = withSpring(0.90, { damping: 12, stiffness: 500 });
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
   const handlePressOut = () => {
-    // Bouncy spring back — low damping = natural overshoot → bounce
     scaleX.value = withSpring(1, { damping: 4, stiffness: 180 });
     scaleY.value = withSpring(1, { damping: 4, stiffness: 180 });
   };
@@ -120,21 +123,28 @@ function ActivityButton({
   const fontSize = Math.max(13, size * 0.118);
   const emojiSize = size * 0.36;
 
+  // "Мои работы" gets a visible dashed ring — unmistakably a gallery, not a maker
+  const ringWidth = activity.isGallery ? 3 : 0;
+  const ringPad = ringWidth + 3; // space between ring and button edge
+
   return (
     <Reanimated.View
       style={[
         animStyle,
         {
-          width: size,
-          height: size,
           margin: size * 0.055,
-          borderRadius: size / 2,
-          // Colored shadow — matches button hue, feels physical
+          // Ring wrapper — only visible for gallery button
+          borderRadius: size / 2 + ringPad,
+          borderWidth: ringWidth,
+          borderColor: activity.isGallery ? "rgba(139,189,168,0.55)" : "transparent",
+          borderStyle: activity.isGallery ? "dashed" : "solid",
+          padding: activity.isGallery ? ringPad : 0,
+          // Colored shadow
           shadowColor: activity.shadow,
           shadowOffset: { width: 0, height: size * 0.09 },
-          shadowOpacity: 0.48,
+          shadowOpacity: activity.isGallery ? 0.32 : 0.48,
           shadowRadius: size * 0.14,
-          elevation: 14,
+          elevation: activity.isGallery ? 8 : 14,
         },
       ]}
     >
@@ -170,17 +180,6 @@ function ActivityButton({
   );
 }
 
-// ─── Decorative dots between rows ─────────────────────────────────
-function RowDivider() {
-  return (
-    <View style={styles.dividerRow}>
-      {[0, 1, 2, 3, 4].map((i) => (
-        <View key={i} style={styles.dividerDot} />
-      ))}
-    </View>
-  );
-}
-
 // ─── Home screen ──────────────────────────────────────────────────
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
@@ -188,21 +187,21 @@ export default function HomeScreen() {
   const { difficulty } = useDifficulty();
   const btnScale = LEVEL_TO_BTN_SCALE[difficulty];
 
-  // ── Layout maths ──────────────────────────────────────────────
-  const padH = 36;
-  const padV = 28;
-  const gearZone = 52;
-  const rowGap = 20;
+  // ── Layout — works in both portrait and landscape ─────────────
+  const padH = 28;
+  const padV = 20;
+  const gearZone = 48;
+  const rowGap = 16;
 
   const usableW = W - insets.left - insets.right - padH * 2;
   const usableH =
     H - insets.top - insets.bottom - padV * 2 - gearZone - rowGap;
 
   const rowH = usableH / 2;
-  const colW = usableW / 3; // 3 buttons per row in both rows
+  const colW = usableW / 3;
 
   const btnSize = Math.floor(
-    Math.min(rowH * 0.90, colW * 0.80, 220) * btnScale
+    Math.min(rowH * 0.88, colW * 0.80, 220) * btnScale
   );
 
   // ── Parent lock (gear) ────────────────────────────────────────
@@ -244,37 +243,38 @@ export default function HomeScreen() {
     holdProgress.setValue(0);
   };
 
-  const topRow = ACTIVITIES.slice(0, 3);
-  const bottomRow = ACTIVITIES.slice(3);
+  const topRow = ACTIVITIES.slice(0, 3); // Раскраски · Рисование · Музыка
+  const bottomRow = ACTIVITIES.slice(3); // Пазлы · Найди пару · Мои работы
 
   return (
     <View
       style={[
         styles.root,
         {
-          paddingTop:
-            insets.top + padV + (Platform.OS === "web" ? 60 : 0),
+          paddingTop: insets.top + padV + (Platform.OS === "web" ? 60 : 0),
           paddingBottom: insets.bottom + padV,
           paddingLeft: insets.left + padH,
           paddingRight: insets.right + padH,
         },
       ]}
     >
-      {/* ── Subtle background decoration ── */}
+      {/* ── Subtle background blobs ── */}
       <View style={styles.bgCircle1} pointerEvents="none" />
       <View style={styles.bgCircle2} pointerEvents="none" />
 
-      {/* ── Top row: 3 activities ── */}
+      {/* ── Top row: create ── */}
       <View style={styles.row}>
         {topRow.map((a) => (
           <ActivityButton key={a.route} activity={a} size={btnSize} />
         ))}
       </View>
 
-      {/* ── Decorative divider ── */}
-      <RowDivider />
+      {/* ── Row separator — thin line, clearly NOT pagination dots ── */}
+      <View style={styles.rowSeparator} pointerEvents="none">
+        <View style={styles.separatorLine} />
+      </View>
 
-      {/* ── Bottom row: 2 activities ── */}
+      {/* ── Bottom row: play + gallery ── */}
       <View style={styles.row}>
         {bottomRow.map((a) => (
           <ActivityButton key={a.route} activity={a} size={btnSize} />
@@ -318,7 +318,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     overflow: "hidden",
   },
-  // Soft warm blobs in background — subtle, non-distracting
   bgCircle1: {
     position: "absolute",
     width: 340,
@@ -344,18 +343,17 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  dividerRow: {
-    flexDirection: "row",
+  rowSeparator: {
+    width: "100%",
     alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    marginVertical: 6,
+    paddingVertical: 8,
   },
-  dividerDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 3.5,
+  separatorLine: {
+    width: 64,
+    height: 2,
+    borderRadius: 1,
     backgroundColor: "#E8D5C4",
+    opacity: 0.7,
   },
   buttonInner: {
     flex: 1,
