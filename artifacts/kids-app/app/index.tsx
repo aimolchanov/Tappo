@@ -1,10 +1,11 @@
 import { Feather } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
 import React, { useRef } from "react";
 import {
   Animated,
+  Image,
+  ImageBackground,
   Platform,
   Pressable,
   StyleSheet,
@@ -23,8 +24,8 @@ import { usePop } from "@/hooks/usePopSound";
 import { useDifficulty } from "@/contexts/DifficultyContext";
 import { LEVEL_TO_BTN_SCALE } from "@/constants/difficulty";
 
-// ─── Design tokens ────────────────────────────────────────────────
-const BG = "#FFF7ED";
+// ─── Assets ───────────────────────────────────────────────────────
+const BG_IMAGE = require("@/assets/images/home_bg.png");
 
 type Route =
   | "/coloring"
@@ -35,119 +36,80 @@ type Route =
   | "/matching";
 
 interface Activity {
-  emoji: string;
+  image: ReturnType<typeof require>;
   label: string;
-  gradient: [string, string];
-  shadow: string;
   route: Route;
-  /** When true, the button gets a subtle ring to signal it's a "viewer", not a creator */
-  isGallery?: boolean;
 }
 
-// Top row  — «создавать»: Раскраски · Рисование · Музыка
-// Bottom row — «играть»:  Пазлы · Найди пару · Мои работы (gallery, visually distinct)
 const ACTIVITIES: Activity[] = [
   {
-    emoji: "🎨",
+    image: require("@/assets/images/icon_coloring.png"),
     label: "Раскраски",
-    gradient: ["#FF9898", "#FF6B6B"],
-    shadow: "#FF6B6B",
     route: "/coloring",
   },
   {
-    emoji: "✏️",
+    image: require("@/assets/images/icon_drawing.png"),
     label: "Рисование",
-    gradient: ["#C4ADFF", "#A78BFA"],
-    shadow: "#A78BFA",
     route: "/drawing",
   },
   {
-    emoji: "🎵",
+    image: require("@/assets/images/icon_music.png"),
     label: "Музыка",
-    gradient: ["#FFE87A", "#FFD93D"],
-    shadow: "#FFD93D",
     route: "/music",
   },
   {
-    emoji: "🧩",
+    image: require("@/assets/images/icon_puzzle.png"),
     label: "Пазлы",
-    gradient: ["#80E0DA", "#4ECDC4"],
-    shadow: "#4ECDC4",
     route: "/puzzles",
   },
   {
-    emoji: "🌈",
+    image: require("@/assets/images/icon_matching.png"),
     label: "Найди пару",
-    gradient: ["#FFB3C6", "#FF6B9D"],
-    shadow: "#FF6B9D",
     route: "/matching",
   },
   {
-    emoji: "⭐",
+    image: require("@/assets/images/icon_myworks.png"),
     label: "Мои работы",
-    // Softer, cooler gradient — reads as "passive / gallery", not "active / create"
-    gradient: ["#C8E6D8", "#8BBDA8"],
-    shadow: "#8BBDA8",
     route: "/my-works",
-    isGallery: true,
   },
 ];
 
 // ─── Single activity button ───────────────────────────────────────
 function ActivityButton({
   activity,
-  size,
+  imgSize,
+  fontSize,
 }: {
   activity: Activity;
-  size: number;
+  imgSize: number;
+  fontSize: number;
 }) {
-  const scaleX = useSharedValue(1);
+  const scale = useSharedValue(1);
   const scaleY = useSharedValue(1);
   const playPop = usePop();
 
   const animStyle = useAnimatedStyle(() => ({
-    transform: [{ scaleX: scaleX.value }, { scaleY: scaleY.value }],
+    transform: [{ scaleX: scale.value }, { scaleY: scaleY.value }],
   }));
 
   const handlePressIn = () => {
-    scaleX.value = withSpring(1.10, { damping: 12, stiffness: 500 });
-    scaleY.value = withSpring(0.90, { damping: 12, stiffness: 500 });
+    // Squish down on press
+    scale.value = withSpring(0.88, { damping: 10, stiffness: 600 });
+    scaleY.value = withSpring(0.88, { damping: 10, stiffness: 600 });
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
   const handlePressOut = () => {
-    scaleX.value = withSpring(1, { damping: 4, stiffness: 180 });
-    scaleY.value = withSpring(1, { damping: 4, stiffness: 180 });
+    // Bouncy release
+    scale.value = withSpring(1, { damping: 4, stiffness: 220 });
+    scaleY.value = withSpring(1, { damping: 4, stiffness: 220 });
   };
 
-  const fontSize = Math.max(13, size * 0.118);
-  const emojiSize = size * 0.36;
-
-  // "Мои работы" gets a visible dashed ring — unmistakably a gallery, not a maker
-  const ringWidth = activity.isGallery ? 3 : 0;
-  const ringPad = ringWidth + 3; // space between ring and button edge
+  // Minimum touch target: 90pt as required
+  const hitArea = Math.max(imgSize + 24, 90);
 
   return (
-    <Reanimated.View
-      style={[
-        animStyle,
-        {
-          margin: size * 0.055,
-          // Ring wrapper — only visible for gallery button
-          borderRadius: size / 2 + ringPad,
-          borderWidth: ringWidth,
-          borderColor: activity.isGallery ? "rgba(139,189,168,0.55)" : "transparent",
-          borderStyle: activity.isGallery ? "dashed" : "solid",
-          padding: activity.isGallery ? ringPad : 0,
-          // Colored shadow
-          shadowColor: activity.shadow,
-          shadowOffset: { width: 0, height: size * 0.09 },
-          shadowOpacity: activity.isGallery ? 0.32 : 0.48,
-          shadowRadius: size * 0.14,
-          elevation: activity.isGallery ? 8 : 14,
-        },
-      ]}
-    >
+    <Reanimated.View style={[animStyle, styles.btnWrapper]}>
       <Pressable
         onPressIn={handlePressIn}
         onPressOut={handlePressOut}
@@ -155,26 +117,17 @@ function ActivityButton({
           playPop();
           router.push(activity.route);
         }}
-        style={{ width: size, height: size, borderRadius: size / 2, overflow: "hidden" }}
+        style={{ alignItems: "center" }}
+        hitSlop={(hitArea - imgSize) / 2}
       >
-        <LinearGradient
-          colors={activity.gradient}
-          start={{ x: 0.3, y: 0 }}
-          end={{ x: 0.7, y: 1 }}
-          style={[styles.buttonInner, { borderRadius: size / 2 }]}
-        >
-          <Text style={{ fontSize: emojiSize, lineHeight: emojiSize * 1.2 }}>
-            {activity.emoji}
-          </Text>
-          <Text
-            style={[styles.label, { fontSize }]}
-            numberOfLines={2}
-            adjustsFontSizeToFit
-            minimumFontScale={0.6}
-          >
-            {activity.label}
-          </Text>
-        </LinearGradient>
+        <Image
+          source={activity.image}
+          style={{ width: imgSize, height: imgSize }}
+          resizeMode="contain"
+        />
+        <Text style={[styles.label, { fontSize }]} numberOfLines={2}>
+          {activity.label}
+        </Text>
       </Pressable>
     </Reanimated.View>
   );
@@ -187,22 +140,29 @@ export default function HomeScreen() {
   const { difficulty } = useDifficulty();
   const btnScale = LEVEL_TO_BTN_SCALE[difficulty];
 
-  // ── Layout — works in both portrait and landscape ─────────────
-  const padH = 28;
-  const padV = 20;
-  const gearZone = 48;
-  const rowGap = 16;
+  // Reserve ~18% at the bottom for the green hill + flowers decoration
+  const hillReserve = H * 0.18;
 
+  const padH = 16;
+  const webTop = Platform.OS === "web" ? 60 : 0;
+  const topSafe = insets.top + webTop;
+  const botSafe = insets.bottom;
+  const gearH = 48;
+
+  // Usable area for the 2-row button grid (above the hill)
   const usableW = W - insets.left - insets.right - padH * 2;
-  const usableH =
-    H - insets.top - insets.bottom - padV * 2 - gearZone - rowGap;
+  const usableH = H - topSafe - botSafe - gearH - hillReserve;
 
-  const rowH = usableH / 2;
-  const colW = usableW / 3;
+  const colCount = 3;
+  const rowCount = 2;
+  const colW = usableW / colCount;
+  const rowH = usableH / rowCount;
 
-  const btnSize = Math.floor(
-    Math.min(rowH * 0.88, colW * 0.80, 220) * btnScale
+  // Icons fill most of their column + row. Cap at 200 for large iPads.
+  const imgSize = Math.floor(
+    Math.min(rowH * 0.72, colW * 0.84, 200) * btnScale
   );
+  const fontSize = Math.max(13, imgSize * 0.185);
 
   // ── Parent lock (gear) ────────────────────────────────────────
   const holdProgress = useRef(new Animated.Value(0)).current;
@@ -243,50 +203,57 @@ export default function HomeScreen() {
     holdProgress.setValue(0);
   };
 
-  const topRow = ACTIVITIES.slice(0, 3); // Раскраски · Рисование · Музыка
-  const bottomRow = ACTIVITIES.slice(3); // Пазлы · Найди пару · Мои работы
+  const topRow = ACTIVITIES.slice(0, 3);
+  const bottomRow = ACTIVITIES.slice(3);
 
   return (
-    <View
-      style={[
-        styles.root,
-        {
-          paddingTop: insets.top + padV + (Platform.OS === "web" ? 60 : 0),
-          paddingBottom: insets.bottom + padV,
-          paddingLeft: insets.left + padH,
-          paddingRight: insets.right + padH,
-        },
-      ]}
+    <ImageBackground
+      source={BG_IMAGE}
+      style={styles.root}
+      resizeMode="cover"
     >
-      {/* ── Subtle background blobs ── */}
-      <View style={styles.bgCircle1} pointerEvents="none" />
-      <View style={styles.bgCircle2} pointerEvents="none" />
+      <View
+        style={[
+          styles.inner,
+          {
+            paddingTop: topSafe + gearH + 8,
+            paddingBottom: botSafe + hillReserve,
+            paddingLeft: insets.left + padH,
+            paddingRight: insets.right + padH,
+          },
+        ]}
+      >
+        {/* ── Top row ── */}
+        <View style={styles.row}>
+          {topRow.map((a) => (
+            <ActivityButton
+              key={a.route}
+              activity={a}
+              imgSize={imgSize}
+              fontSize={fontSize}
+            />
+          ))}
+        </View>
 
-      {/* ── Top row: create ── */}
-      <View style={styles.row}>
-        {topRow.map((a) => (
-          <ActivityButton key={a.route} activity={a} size={btnSize} />
-        ))}
+        {/* ── Bottom row ── */}
+        <View style={styles.row}>
+          {bottomRow.map((a) => (
+            <ActivityButton
+              key={a.route}
+              activity={a}
+              imgSize={imgSize}
+              fontSize={fontSize}
+            />
+          ))}
+        </View>
       </View>
 
-      {/* ── Row separator — thin line, clearly NOT pagination dots ── */}
-      <View style={styles.rowSeparator} pointerEvents="none">
-        <View style={styles.separatorLine} />
-      </View>
-
-      {/* ── Bottom row: play + gallery ── */}
-      <View style={styles.row}>
-        {bottomRow.map((a) => (
-          <ActivityButton key={a.route} activity={a} size={btnSize} />
-        ))}
-      </View>
-
-      {/* ── Parent lock gear (top-right, discreet) ── */}
+      {/* ── Parent lock gear ── */}
       <View
         style={[
           styles.gearCorner,
           {
-            top: insets.top + 14 + (Platform.OS === "web" ? 60 : 0),
+            top: topSafe + 10,
             right: insets.right + 18,
           },
         ]}
@@ -303,73 +270,40 @@ export default function HomeScreen() {
           style={styles.gearBtn}
           hitSlop={10}
         >
-          <Feather name="settings" size={21} color="#C5B5A8" />
+          <Feather name="settings" size={21} color="#A09080" />
         </Pressable>
       </View>
-    </View>
+    </ImageBackground>
   );
 }
 
+// ─── Styles ───────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: BG,
+  },
+  inner: {
+    flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    overflow: "hidden",
-  },
-  bgCircle1: {
-    position: "absolute",
-    width: 340,
-    height: 340,
-    borderRadius: 170,
-    backgroundColor: "#FFE5C8",
-    opacity: 0.38,
-    top: -80,
-    left: -100,
-  },
-  bgCircle2: {
-    position: "absolute",
-    width: 260,
-    height: 260,
-    borderRadius: 130,
-    backgroundColor: "#C8EFE8",
-    opacity: 0.3,
-    bottom: -60,
-    right: -60,
+    gap: 8,
   },
   row: {
     flexDirection: "row",
     justifyContent: "center",
     alignItems: "center",
   },
-  rowSeparator: {
-    width: "100%",
+  btnWrapper: {
     alignItems: "center",
-    paddingVertical: 8,
-  },
-  separatorLine: {
-    width: 64,
-    height: 2,
-    borderRadius: 1,
-    backgroundColor: "#E8D5C4",
-    opacity: 0.7,
-  },
-  buttonInner: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    gap: 5,
-    paddingHorizontal: 6,
+    marginHorizontal: 14,
+    marginVertical: 8,
   },
   label: {
     fontFamily: "Fredoka_700Bold",
-    color: "#FFFFFF",
+    color: "#4A3728",
     letterSpacing: 0.2,
     textAlign: "center",
-    textShadowColor: "rgba(0,0,0,0.15)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
+    marginTop: 8,
   },
   gearCorner: {
     position: "absolute",
