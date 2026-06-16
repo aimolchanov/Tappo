@@ -1,0 +1,23 @@
+Please completely overhaul the Puzzles (Пазлы) screen component to use dynamic, programmatic image slicing and integrate our new custom artwork.
+
+Follow these exact technical requirements:
+
+1. Layout & Background:
+- Use "games background.png" as the background for this screen (with `resizeMode: 'cover'`).
+- The screen should have two main areas: a central "target board" (where the puzzle silhouette/shadow sits) and a "tray/dock" area (at the bottom or side) where the loose, shuffled pieces are placed.
+
+2. Dynamic Programmatic Slicing (Crucial):
+- Do NOT use pre-cut individual piece images. The screen must take a single, whole image asset and programmatically slice it into a grid. 
+- For the starting level, slice the image into a 2x2 grid (4 equal square/rectangular pieces).
+- Use `react-native-skia` rendering capabilities (like sub-rect texture coordinates or clipping rects) to dynamically divide the source image into 4 segments.
+- Critical Bugfix: Implement a strict validation check before the game starts to ensure ALL 4 sliced pieces are fully generated and rendered. No pieces must be missing from the board.
+
+3. Drag-and-Drop Logic & Feedback:
+- Shuffle the 4 loose pieces randomly inside the tray area at the start of the round.
+- Success Match: When a piece is dragged close to its correct grid position on the target board (within a 20-25px threshold), it must snap perfectly into place, lock, and become non-draggable.
+- Mismatch/Release Fail: If a piece is released in the wrong place or outside its threshold, it must smoothly animate (slide/bounce back) to its starting position in the tray, triggering a soft placeholder sound effect hook. No red crosses or buzzer sounds.
+
+4. Asset Integration:
+- Set up the image array switcher to pull from local assets. Assume the files are named exactly: "puzzle_1.png", "puzzle_2.png", and "puzzle_3.png" (I am uploading these files to the assets folder).
+
+Please refactor the puzzle screen component with this programmatic slicing architecture and update the live preview.

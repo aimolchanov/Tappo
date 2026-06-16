@@ -18,7 +18,6 @@ import {
   StyleSheet,
   View,
 } from "react-native";
-
 import Reanimated, {
   useAnimatedStyle,
   useSharedValue,
@@ -28,25 +27,36 @@ import Reanimated, {
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+// ─── Assets ──────────────────────────────────────────────────────
 const GAMES_BG = require("@/assets/images/games_background.png");
 
-// ─── Config ──────────────────────────────────────────────────────
-const PUZZLE_IMAGE = require("@/assets/images/puzzle_1.png");
+// Rotating pool of 7 puzzle images
+const PUZZLE_IMAGES = [
+  require("@/assets/images/puzzle_1.png"),
+  require("@/assets/images/puzzle_2.png"),
+  require("@/assets/images/puzzle_3.png"),
+  require("@/assets/images/puzzle_4.png"),
+  require("@/assets/images/puzzle_5.png"),
+  require("@/assets/images/puzzle_6.png"),
+  require("@/assets/images/puzzle_7.png"),
+] as const;
 
-const GAP = 10;
-const HEADER_H = 76;
-// Snap distance is capped — computed relative to pieceSize inside the screen
-const BASE_SNAP_RATIO = 0.55; // piece must be within 55% of its own size to snap
+// ─── Constants ───────────────────────────────────────────────────
+const HEADER_H = 68;
+const PIECE_GAP = 6;   // gap between adjacent pieces (visible as thin grid lines)
+const TRAY_VPAD = 14;  // vertical padding inside tray dock
+const TRAY_HPAD = 22;  // horizontal padding inside tray dock
+const PIECE_GAP_TRAY = 12; // spacing between pieces in tray
 
 // ─── Types ───────────────────────────────────────────────────────
 interface PieceConfig {
   id: number;
   col: number;
   row: number;
-  boardX: number;
-  boardY: number;
-  trayX: number;
-  trayY: number;
+  boardX: number; // absolute screen x when snapped
+  boardY: number; // absolute screen y when snapped
+  trayX: number;  // absolute screen x in tray (shuffled)
+  trayY: number;  // absolute screen y in tray
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────
@@ -59,36 +69,14 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
-// ─── Difficulty grid icon ─────────────────────────────────────────
-function DiffIcon({ cols, rows, active }: { cols: number; rows: number; active: boolean }) {
-  return (
-    <View style={{ gap: 4 }}>
-      {Array.from({ length: rows }, (_, r) => (
-        <View key={r} style={{ flexDirection: "row", gap: 4 }}>
-          {Array.from({ length: cols }, (_, c) => (
-            <View
-              key={c}
-              style={{
-                width: 9,
-                height: 9,
-                borderRadius: 5,
-                backgroundColor: active ? "#FFFFFF" : "#777",
-              }}
-            />
-          ))}
-        </View>
-      ))}
-    </View>
-  );
-}
-
-// ─── One puzzle piece ─────────────────────────────────────────────
+// ─── PuzzlePieceView ─────────────────────────────────────────────
 interface PieceProps {
   config: PieceConfig;
   pieceSize: number;
+  boardW: number;
+  boardH: number;
   snapDist: number;
-  cols: number;
-  rows: number;
+  source: ReturnType<typeof require>;
   onPlaced: (id: number) => void;
   onMiss: () => void;
   onPlayMiss: () => void;
@@ -99,9 +87,10 @@ interface PieceProps {
 function PuzzlePieceView({
   config,
   pieceSize,
+  boardW,
+  boardH,
   snapDist,
-  cols,
-  rows,
+  source,
   onPlaced,
   onMiss,
   onPlayMiss,
@@ -115,7 +104,8 @@ function PuzzlePieceView({
   const isPlacedRef = useRef(false);
   const [isDragging, setIsDragging] = useState(false);
 
-  // Reset on difficulty change or puzzle reset
+  // Reset whenever puzzle is reshuffled (key change also unmounts/remounts,
+  // this effect is a belt-and-suspenders guard)
   useEffect(() => {
     isPlacedRef.current = false;
     posRef.current = { x: config.trayX, y: config.trayY };
@@ -142,21 +132,21 @@ function PuzzlePieceView({
           setIsDragging(false);
           animPos.flattenOffset();
 
-          // Use PIECE CENTER for distance check (same as matching screen)
           const tlX = posRef.current.x + gs.dx;
           const tlY = posRef.current.y + gs.dy;
           posRef.current = { x: tlX, y: tlY };
 
           if (isPlacedRef.current) return;
 
-          const centerX = tlX + pieceSize / 2;
-          const centerY = tlY + pieceSize / 2;
-          const targetCX = config.boardX + pieceSize / 2;
-          const targetCY = config.boardY + pieceSize / 2;
-          const dist = Math.hypot(centerX - targetCX, centerY - targetCY);
+          // Compare piece center vs target slot center
+          const cx = tlX + pieceSize / 2;
+          const cy = tlY + pieceSize / 2;
+          const tcx = config.boardX + pieceSize / 2;
+          const tcy = config.boardY + pieceSize / 2;
+          const dist = Math.hypot(cx - tcx, cy - tcy);
 
           if (dist < snapDist) {
-            // ✅ Correct slot — snap and lock
+            // ✅ Correct slot — snap & lock
             isPlacedRef.current = true;
             posRef.current = { x: config.boardX, y: config.boardY };
             Animated.spring(animPos, {
@@ -167,7 +157,7 @@ function PuzzlePieceView({
             }).start();
             onPlaced(config.id);
           } else {
-            // ❌ Wrong spot — gentle spring back to tray, no punishment
+            // ❌ Wrong spot — spring back quietly
             onMiss();
             onPlayMiss();
             Animated.spring(animPos, {
@@ -191,21 +181,13 @@ function PuzzlePieceView({
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
-      config.boardX,
-      config.boardY,
-      config.trayX,
-      config.trayY,
+      config.boardX, config.boardY,
+      config.trayX, config.trayY,
       config.id,
-      pieceSize,
-      snapDist,
-      isComplete,
-      onMiss,
-      onPlayMiss,
+      pieceSize, snapDist, isComplete,
+      onMiss, onPlayMiss,
     ]
   );
-
-  const totalW = pieceSize * cols;
-  const totalH = pieceSize * rows;
 
   return (
     <Animated.View
@@ -218,13 +200,14 @@ function PuzzlePieceView({
           transform: animPos.getTranslateTransform(),
           shadowColor: "#000",
           shadowOffset: { width: 0, height: isDragging ? 10 : 3 },
-          shadowOpacity: isDragging ? 0.42 : 0.18,
-          shadowRadius: isDragging ? 14 : 6,
-          elevation: isDragging ? 12 : 3,
+          shadowOpacity: isDragging ? 0.38 : 0.15,
+          shadowRadius: isDragging ? 16 : 6,
+          elevation: isDragging ? 14 : 3,
         },
       ]}
       {...panResponder.panHandlers}
     >
+      {/* Clipping view — reveals only this piece's region of the full image */}
       <View
         style={{
           width: pieceSize,
@@ -234,23 +217,24 @@ function PuzzlePieceView({
         }}
       >
         <Image
-          source={PUZZLE_IMAGE}
+          source={source}
           style={{
-            width: totalW,
-            height: totalH,
+            width: boardW,
+            height: boardH,
             position: "absolute",
-            left: -config.col * pieceSize,
-            top: -config.row * pieceSize,
+            left: -config.col * (pieceSize + PIECE_GAP),
+            top: -config.row * (pieceSize + PIECE_GAP),
           }}
           resizeMode="cover"
         />
+        {/* Subtle gloss border */}
         <View
           style={{
             position: "absolute",
             inset: 0,
             borderRadius: 10,
-            borderWidth: 2.5,
-            borderColor: "rgba(255,255,255,0.5)",
+            borderWidth: 2,
+            borderColor: "rgba(255,255,255,0.45)",
           }}
         />
       </View>
@@ -262,10 +246,8 @@ function PuzzlePieceView({
 export default function PuzzlesScreen() {
   const insets = useSafeAreaInsets();
   const { width: SW, height: SH } = Dimensions.get("window");
-
   const { soundEffects, volume } = useAppSettings();
   const { difficulty: diffLevel, recordSignal } = useDifficulty();
-  // Shared miss sound — same pop.wav used by the matching screen
   const playMissSound = usePop();
 
   const snapPlayer = useAudioPlayer(
@@ -278,61 +260,160 @@ export default function PuzzlesScreen() {
   const { cols, rows } = LEVEL_TO_PUZZLE[diffLevel];
   const totalPieces = cols * rows;
 
+  // ── State ─────────────────────────────────────────────────────
+  const [puzzleIdx, setPuzzleIdx] = useState(0);
   const [resetKey, setResetKey] = useState(0);
-  const [placedCount, setPlacedCount] = useState(0);
-  const [isComplete, setIsComplete] = useState(false);
+  // Track each placed piece by its id
+  const [placedIds, setPlacedIds] = useState<Record<number, boolean>>({});
+
+  const puzzleImage = PUZZLE_IMAGES[puzzleIdx % PUZZLE_IMAGES.length];
+  const placedCount = Object.keys(placedIds).length;
+  const isComplete = placedCount === totalPieces && totalPieces > 0;
 
   const startTimeRef = useRef(Date.now());
   const missCountRef = useRef(0);
+  // Guard so completion effect fires exactly once per round
+  const completionReportedRef = useRef(false);
 
+  // Celebration scale lives here so diffLevel reset can clear it
+  const celebScale = useSharedValue(1);
+
+  // Reset when difficulty level changes
   useEffect(() => {
     setResetKey((k) => k + 1);
-    setPlacedCount(0);
-    setIsComplete(false);
-    celebScale.value = 1;
+    setPlacedIds({});
     startTimeRef.current = Date.now();
     missCountRef.current = 0;
+    completionReportedRef.current = false;
+    celebScale.value = 1;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [diffLevel]);
 
+  // ── Completion — safely outside render phase ──────────────────
+  // recordSignal MUST live here, not inside a setState updater,
+  // to avoid "Cannot update a component while rendering another" error.
+  useEffect(() => {
+    if (!isComplete || completionReportedRef.current) return;
+    completionReportedRef.current = true;
+
+    recordSignal({
+      screen: "puzzle",
+      durationMs: Date.now() - startTimeRef.current,
+      missCount: missCountRef.current,
+      hitCount: totalPieces,
+    });
+
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    celebScale.value = withSequence(
+      withSpring(1.05, { damping: 5, stiffness: 140 }),
+      withTiming(1.0, { duration: 600 })
+    );
+
+    setTimeout(() => {
+      if (soundEffects) {
+        try {
+          completePlayer.volume = volume;
+          completePlayer.seekTo(0);
+          completePlayer.play();
+        } catch {}
+      }
+    }, 150);
+
+    // After short celebration → advance to next image, fresh puzzle
+    setTimeout(() => {
+      setPuzzleIdx((i) => i + 1);
+      setPlacedIds({});
+      startTimeRef.current = Date.now();
+      missCountRef.current = 0;
+      completionReportedRef.current = false;
+      celebScale.value = 1;
+      setResetKey((k) => k + 1);
+    }, 1500);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isComplete]);
+
+  // ── Handlers ──────────────────────────────────────────────────
   const handleMiss = useCallback(() => {
     missCountRef.current += 1;
   }, []);
 
-  // ── Layout math ──────────────────────────────────────────────
-  const topPad = HEADER_H + insets.top + (Platform.OS === "web" ? 67 : 0);
-  const botPad = insets.bottom + (Platform.OS === "web" ? 34 : 0);
-  const availH = SH - topPad - botPad - 24;
-  const totalW = SW - insets.left - insets.right - 32;
-  const boardW = totalW * 0.60;
-  const trayLeft = insets.left + 16 + boardW + 24;
-  const trayW = totalW - boardW - 24;
+  const handlePiecePlaced = useCallback(
+    (id: number) => {
+      if (soundEffects) {
+        try {
+          snapPlayer.volume = volume;
+          snapPlayer.seekTo(0);
+          snapPlayer.play();
+        } catch {}
+      }
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      // Only update count state here — completion side-effects in useEffect above
+      setPlacedIds((prev) => ({ ...prev, [id]: true }));
+    },
+    [snapPlayer, soundEffects, volume]
+  );
 
-  // Tray layout: 2 columns; trayRows = how many vertical rows the tray needs
-  const trayColCount = 2;
-  const trayRows = Math.ceil(totalPieces / trayColCount);
+  const resetPuzzle = useCallback(() => {
+    setResetKey((k) => k + 1);
+    setPlacedIds({});
+    startTimeRef.current = Date.now();
+    missCountRef.current = 0;
+    completionReportedRef.current = false;
+    celebScale.value = 1;
+  }, [celebScale]);
 
-  // pieceSize constrained by BOTH board AND tray dimensions.
-  // Without the tray-height constraint, the bottom tray row(s) can render
-  // off-screen, making those pieces invisible and their board slots unfillable.
+  // ── Layout ────────────────────────────────────────────────────
+  const webOff = Platform.OS === "web" ? 67 : 0;
+  const topSafe = insets.top + webOff;
+  const botSafe = insets.bottom + (Platform.OS === "web" ? 34 : 0);
+  const contentTop = topSafe + HEADER_H;
+  const contentH = SH - contentTop - botSafe - 8;
+  const contentW = SW - insets.left - insets.right;
+
+  // Tray row config — try to keep pieces in one row, 2 rows for larger counts
+  const piecesPerTrayRow = totalPieces <= 5 ? totalPieces : Math.ceil(totalPieces / 2);
+  const trayNumRows = Math.ceil(totalPieces / piecesPerTrayRow);
+
+  // Reserve ~30% of content height for tray area (including dock + gaps)
+  const trayAreaH = Math.max(90, contentH * 0.30);
+  const boardAreaH = contentH - trayAreaH - 20; // 20px gap between board and tray
+
+  // Piece size = minimum of 4 constraints so nothing overflows
   const pieceSize = Math.max(
-    30,
+    44,
     Math.min(
-      Math.floor((boardW - GAP * (cols - 1)) / cols),           // board column width
-      Math.floor((availH - GAP * (rows - 1)) / rows),           // board row height
-      Math.floor((trayW - GAP * (trayColCount - 1)) / trayColCount) - 4, // tray column width
-      Math.floor((availH - GAP * (trayRows - 1)) / trayRows),   // ← NEW: tray row height
-      190
+      // Board height: fit `rows` pieces vertically
+      Math.floor((boardAreaH - PIECE_GAP * (rows - 1)) / rows),
+      // Board width: board occupies at most 84% of screen width
+      Math.floor((contentW * 0.84 - PIECE_GAP * (cols - 1)) / cols),
+      // Tray height: fit `trayNumRows` pieces inside tray dock
+      Math.floor((trayAreaH - TRAY_VPAD * 2 - PIECE_GAP_TRAY * (trayNumRows - 1)) / trayNumRows),
+      // Tray width: fit `piecesPerTrayRow` pieces across full screen width
+      Math.floor((contentW - TRAY_HPAD * 2 - PIECE_GAP_TRAY * (piecesPerTrayRow - 1)) / piecesPerTrayRow),
+      190 // hard cap
     )
   );
 
-  // Snap distance scales with piece size so it feels consistent on all screen sizes
-  const snapDist = Math.round(pieceSize * BASE_SNAP_RATIO);
+  // Snap threshold: at least 25px, scales gently with piece size
+  const snapDist = Math.max(25, Math.round(pieceSize * 0.20));
 
-  const boardActW = pieceSize * cols + GAP * (cols - 1);
-  const boardActH = pieceSize * rows + GAP * (rows - 1);
-  const boardX0 = insets.left + 16 + (boardW - boardActW) / 2;
-  const boardY0 = topPad + (availH - boardActH) / 2;
+  // Board dimensions and absolute position
+  const boardW = pieceSize * cols + PIECE_GAP * (cols - 1);
+  const boardH = pieceSize * rows + PIECE_GAP * (rows - 1);
+  const boardX = insets.left + Math.floor((contentW - boardW) / 2);
+  const boardY = contentTop + Math.floor((boardAreaH - boardH) / 2);
+
+  // Tray dock dimensions and absolute position
+  const trayRowW = piecesPerTrayRow * pieceSize + (piecesPerTrayRow - 1) * PIECE_GAP_TRAY;
+  const trayContainerW = Math.min(contentW - 32, trayRowW + TRAY_HPAD * 2);
+  const trayContainerH =
+    trayNumRows * pieceSize + (trayNumRows - 1) * PIECE_GAP_TRAY + TRAY_VPAD * 2;
+  const trayX = insets.left + Math.floor((contentW - trayContainerW) / 2);
+  const trayY = contentTop + boardAreaH + 20;
+
+  // Starting X for the first tray piece (centered inside dock)
+  const trayPieceStartX = trayX + Math.floor((trayContainerW - trayRowW) / 2);
+  const trayPieceStartY = trayY + TRAY_VPAD;
 
   // ── Piece configs ─────────────────────────────────────────────
   const pieces = useMemo<PieceConfig[]>(() => {
@@ -343,130 +424,70 @@ export default function PuzzlesScreen() {
           id: r * cols + c,
           col: c,
           row: r,
-          boardX: boardX0 + c * (pieceSize + GAP),
-          boardY: boardY0 + r * (pieceSize + GAP),
+          boardX: boardX + c * (pieceSize + PIECE_GAP),
+          boardY: boardY + r * (pieceSize + PIECE_GAP),
           trayX: 0,
           trayY: 0,
         });
       }
     }
 
-    // Assign each piece a unique random tray slot
-    const slotOrder = shuffle(Array.from({ length: all.length }, (_, i) => i));
-    slotOrder.forEach((pieceIdx, slot) => {
-      const trayCol = slot % trayColCount;
-      const trayRow = Math.floor(slot / trayColCount);
-      all[pieceIdx].trayX = trayLeft + trayCol * (pieceSize + GAP);
-      all[pieceIdx].trayY = topPad + 8 + trayRow * (pieceSize + GAP);
+    // Assign a random shuffled tray slot to each piece
+    const order = shuffle(Array.from({ length: all.length }, (_, i) => i));
+    order.forEach((pieceIndex, slot) => {
+      const slotCol = slot % piecesPerTrayRow;
+      const slotRow = Math.floor(slot / piecesPerTrayRow);
+      all[pieceIndex].trayX = trayPieceStartX + slotCol * (pieceSize + PIECE_GAP_TRAY);
+      all[pieceIndex].trayY = trayPieceStartY + slotRow * (pieceSize + PIECE_GAP_TRAY);
     });
 
-    // Safety check: validate that every piece has a valid tray position.
-    // With the tray-height constraint above this should never fire, but
-    // belt-and-suspenders guarantees a complete, solvable puzzle.
-    const allValid = all.every(
-      (p) =>
-        p.trayX >= trayLeft &&
-        p.trayY >= topPad &&
-        p.trayY + pieceSize <= topPad + availH + botPad + 24
-    );
-    if (!allValid || all.length !== rows * cols) {
-      // Regeneration would normally not be needed; this is a safeguard
-      console.warn("[Puzzle] piece set invalid — check layout constraints");
+    // ── Strict validation: every piece must have a finite, on-screen position
+    const allValid =
+      all.length === rows * cols &&
+      all.every(
+        (p) =>
+          Number.isFinite(p.boardX) &&
+          Number.isFinite(p.boardY) &&
+          Number.isFinite(p.trayX) &&
+          Number.isFinite(p.trayY)
+      );
+
+    if (!allValid) {
+      console.warn(
+        "[Puzzle] Piece validation FAILED — check layout constraints.",
+        { cols, rows, pieceSize, boardX, boardY, trayX, trayY }
+      );
     }
 
     return all;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cols, rows, pieceSize, boardX0, boardY0, trayLeft, topPad, trayColCount, resetKey]);
+  }, [
+    cols, rows, pieceSize,
+    boardX, boardY,
+    trayPieceStartX, trayPieceStartY,
+    piecesPerTrayRow,
+    resetKey,
+  ]);
 
-  // ── Celebration animation ─────────────────────────────────────
-  const celebScale = useSharedValue(1);
   const celebStyle = useAnimatedStyle(() => ({
     transform: [{ scale: celebScale.value }],
   }));
 
-  const handlePiecePlaced = (id: number) => {
-    if (soundEffects) {
-      try {
-        snapPlayer.volume = volume;
-        snapPlayer.seekTo(0);
-        snapPlayer.play();
-      } catch {}
-    }
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-
-    setPlacedCount((prev) => {
-      const next = prev + 1;
-      if (next === totalPieces) {
-        setIsComplete(true);
-        recordSignal({
-          screen: "puzzle",
-          durationMs: Date.now() - startTimeRef.current,
-          missCount: missCountRef.current,
-          hitCount: next,
-        });
-        setTimeout(() => {
-          if (soundEffects) {
-            try {
-              completePlayer.volume = volume;
-              completePlayer.seekTo(0);
-              completePlayer.play();
-            } catch {}
-          }
-        }, 150);
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        celebScale.value = withSequence(
-          withSpring(1.05, { damping: 5, stiffness: 140 }),
-          withTiming(1.0, { duration: 500 })
-        );
-      }
-      return next;
-    });
-  };
-
-  const resetPuzzle = useCallback(() => {
-    setResetKey((k) => k + 1);
-    setPlacedCount(0);
-    setIsComplete(false);
-    celebScale.value = 1;
-    startTimeRef.current = Date.now();
-    missCountRef.current = 0;
-  }, [celebScale]);
-
-  // ── Board slot outlines ───────────────────────────────────────
-  const slots = useMemo(() => {
-    const result = [];
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        result.push({
-          key: `${r}-${c}`,
-          left: boardX0 + c * (pieceSize + GAP),
-          top: boardY0 + r * (pieceSize + GAP),
-        });
-      }
-    }
-    return result;
-  }, [rows, cols, boardX0, boardY0, pieceSize]);
-
   return (
-    <ImageBackground
-      source={GAMES_BG}
-      resizeMode="cover"
-      style={[
-        styles.container,
-        {
-          paddingTop: insets.top + (Platform.OS === "web" ? 67 : 0),
-          paddingBottom: botPad,
-          paddingLeft: insets.left,
-          paddingRight: insets.right,
-        },
-      ]}
-    >
+    <ImageBackground source={GAMES_BG} style={styles.root} resizeMode="cover">
+
       {/* ── Header ── */}
-      <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn}>
-          <Feather name="arrow-left" size={28} color="#555" />
+      <View
+        style={[
+          styles.header,
+          { top: topSafe, left: insets.left, right: insets.right },
+        ]}
+      >
+        <Pressable onPress={() => router.back()} style={styles.headerBtn}>
+          <Feather name="arrow-left" size={28} color="#6B5B4E" />
         </Pressable>
 
+        {/* Progress dots: one per piece, fill teal as pieces snap */}
         <View style={styles.progressRow}>
           {Array.from({ length: totalPieces }, (_, i) => (
             <View
@@ -479,38 +500,88 @@ export default function PuzzlesScreen() {
           ))}
         </View>
 
-        <Pressable onPress={resetPuzzle} style={styles.backBtn}>
-          <Feather name="refresh-cw" size={24} color="#555" />
+        <Pressable onPress={resetPuzzle} style={styles.headerBtn}>
+          <Feather name="refresh-cw" size={24} color="#6B5B4E" />
         </Pressable>
       </View>
 
-      {/* ── Board slot outlines ── */}
-      {slots.map((slot) => (
-        <View
-          key={slot.key}
-          style={[
-            styles.slot,
-            {
-              left: slot.left,
-              top: slot.top,
-              width: pieceSize,
-              height: pieceSize,
-            },
-          ]}
-        />
-      ))}
-
-      {/* ── Tray separator line ── */}
+      {/* ── Board card shadow ── */}
       <View
-        style={[
-          styles.trayLine,
-          { left: trayLeft - 14, top: topPad, height: availH },
-        ]}
+        style={{
+          position: "absolute",
+          left: boardX - 10,
+          top: boardY - 10,
+          width: boardW + 20,
+          height: boardH + 20,
+          borderRadius: 18,
+          backgroundColor: "rgba(255,255,255,0.42)",
+          shadowColor: "#8B6A50",
+          shadowOffset: { width: 0, height: 6 },
+          shadowOpacity: 0.22,
+          shadowRadius: 16,
+          elevation: 6,
+          zIndex: 2,
+        }}
       />
 
-      {/* ── Puzzle pieces ── */}
+      {/* ── Ghost cells — puzzle silhouette at each slot (20% opacity) ──
+           Programmatic slicing: each cell renders the correct sub-region
+           of the full image using overflow:hidden + negative offset.
+           As the child places pieces, the full-opacity pieces gradually
+           cover these ghost cells, completing the picture. ── */}
+      {pieces.map((p) => (
+        <View
+          key={`ghost_${p.id}`}
+          style={{
+            position: "absolute",
+            left: p.boardX,
+            top: p.boardY,
+            width: pieceSize,
+            height: pieceSize,
+            overflow: "hidden",
+            borderRadius: 10,
+            opacity: 0.22,
+            zIndex: 3,
+          }}
+        >
+          <Image
+            source={puzzleImage}
+            style={{
+              width: boardW,
+              height: boardH,
+              position: "absolute",
+              left: -p.col * (pieceSize + PIECE_GAP),
+              top: -p.row * (pieceSize + PIECE_GAP),
+            }}
+            resizeMode="cover"
+          />
+        </View>
+      ))}
+
+      {/* ── Tray dock ── */}
+      <View
+        style={{
+          position: "absolute",
+          left: trayX,
+          top: trayY,
+          width: trayContainerW,
+          height: trayContainerH,
+          borderRadius: 22,
+          backgroundColor: "rgba(255,247,237,0.72)",
+          borderWidth: 2,
+          borderColor: "rgba(255,255,255,0.68)",
+          shadowColor: "#8B6A50",
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.16,
+          shadowRadius: 10,
+          elevation: 4,
+          zIndex: 2,
+        }}
+      />
+
+      {/* ── Draggable pieces (float over board and tray) ── */}
       <Reanimated.View
-        style={[StyleSheet.absoluteFill, celebStyle]}
+        style={[StyleSheet.absoluteFill, celebStyle, { zIndex: 10 }]}
         pointerEvents="box-none"
       >
         {pieces.map((config) => (
@@ -518,9 +589,10 @@ export default function PuzzlesScreen() {
             key={`${config.id}-${resetKey}`}
             config={config}
             pieceSize={pieceSize}
+            boardW={boardW}
+            boardH={boardH}
             snapDist={snapDist}
-            cols={cols}
-            rows={rows}
+            source={puzzleImage}
             onPlaced={handlePiecePlaced}
             onMiss={handleMiss}
             onPlayMiss={playMissSound}
@@ -529,38 +601,40 @@ export default function PuzzlesScreen() {
           />
         ))}
       </Reanimated.View>
+
     </ImageBackground>
   );
 }
 
 // ─── Styles ───────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  container: {
+  root: {
     flex: 1,
   },
   header: {
+    position: "absolute",
     height: HEADER_H,
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 16,
-    gap: 14,
+    paddingHorizontal: 12,
+    zIndex: 100,
   },
-  backBtn: {
-    width: 52,
-    height: 52,
-    borderRadius: 16,
-    backgroundColor: "rgba(0,0,0,0.07)",
+  headerBtn: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "rgba(255,255,255,0.55)",
     justifyContent: "center",
     alignItems: "center",
   },
   progressRow: {
+    flex: 1,
     flexDirection: "row",
     gap: 7,
-    marginLeft: "auto",
-    marginRight: 8,
-    flexWrap: "wrap",
     justifyContent: "center",
-    maxWidth: "60%",
+    alignItems: "center",
+    flexWrap: "wrap",
+    paddingHorizontal: 8,
   },
   progressDot: {
     width: 13,
@@ -571,23 +645,9 @@ const styles = StyleSheet.create({
   progressDotFilled: {
     backgroundColor: "#4ECDC4",
   },
-  slot: {
-    position: "absolute",
-    borderWidth: 2,
-    borderColor: "rgba(0,0,0,0.18)",
-    borderRadius: 10,
-    borderStyle: "dashed",
-    backgroundColor: "rgba(0,0,0,0.03)",
-  },
   pieceAbsolute: {
     position: "absolute",
     left: 0,
     top: 0,
-  },
-  trayLine: {
-    position: "absolute",
-    width: 2,
-    backgroundColor: "rgba(0,0,0,0.08)",
-    borderRadius: 1,
   },
 });
