@@ -49,28 +49,25 @@ function TargetSlot({
   target,
   w,
   h,
-  matchCount,
-  itemsPerColor,
+  isMatched,
 }: {
   target: TargetWithPos;
   w: number;
   h: number;
-  matchCount: number;
-  itemsPerColor: number;
+  isMatched: boolean;
 }) {
   const scale = useSharedValue(1);
 
   useEffect(() => {
-    if (matchCount > 0) {
+    if (isMatched) {
       scale.value = withSequence(
         withSpring(1.15, { damping: 3, stiffness: 500 }),
         withSpring(1.0, { damping: 7 })
       );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [matchCount]);
+  }, [isMatched]);
 
-  const isFilled = matchCount >= itemsPerColor;
   const R = Math.round(h * 0.32);
   const checkR = Math.round(h * 0.25);
 
@@ -95,7 +92,7 @@ function TargetSlot({
           elevation: 10,
         }}
       >
-        {isFilled && (
+        {isMatched && (
           <View
             style={{
               width: checkR * 2,
@@ -323,32 +320,76 @@ export default function MatchingScreen() {
   // ── Puzzle state ──────────────────────────────────────────────
   const [resetKey, setResetKey] = useState(0);
   const [puzzle, setPuzzle] = useState(() => generateColorPuzzle(diffLevel));
-  const [matchCounts, setMatchCounts] = useState<Record<string, number>>({});
-  const [matchedItems, setMatchedItems] = useState<Record<string, boolean>>({});
+  // matchedItemIds: set of item IDs that have been successfully matched
+  const [matchedItemIds, setMatchedItemIds] = useState<Record<string, boolean>>({});
+  // matchedTargetIds: which target IDs have been filled
+  const [matchedTargetIds, setMatchedTargetIds] = useState<Record<string, boolean>>({});
 
   const startTimeRef = useRef(Date.now());
   const missCountRef = useRef(0);
   const hitCountRef = useRef(0);
+  // Guard so completion effect fires exactly once per round
+  const completionReportedRef = useRef(false);
 
+  // Reset puzzle when difficulty level changes
   useEffect(() => {
     const newPuzzle = generateColorPuzzle(diffLevel);
     setPuzzle(newPuzzle);
-    setMatchCounts({});
-    setMatchedItems({});
+    setMatchedItemIds({});
+    setMatchedTargetIds({});
     startTimeRef.current = Date.now();
     missCountRef.current = 0;
     hitCountRef.current = 0;
+    completionReportedRef.current = false;
     setResetKey((k) => k + 1);
   }, [diffLevel]);
 
   const totalItems = puzzle.items.length;
-  const matchedCount = Object.keys(matchedItems).length;
-  const isComplete = matchedCount === totalItems;
+  const matchedCount = Object.keys(matchedItemIds).length;
+  const isComplete = matchedCount === totalItems && totalItems > 0;
 
-  const { itemsPerColor } = useMemo(() => {
-    const cfg = { 1: 1, 2: 2, 3: 2 } as const;
-    return { itemsPerColor: cfg[diffLevel as 1 | 2 | 3] ?? 1 };
-  }, [diffLevel]);
+  // ── Completion effect — safely OUTSIDE render phase ────────────
+  // This is the ONLY place recordSignal is called, inside useEffect,
+  // after React has committed the state update. No setState-during-render.
+  useEffect(() => {
+    if (!isComplete || completionReportedRef.current) return;
+    completionReportedRef.current = true;
+
+    // Report to adaptive difficulty engine
+    recordSignal({
+      screen: "matching",
+      durationMs: Date.now() - startTimeRef.current,
+      missCount: missCountRef.current,
+      hitCount: hitCountRef.current,
+    });
+
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+    // Play complete sound slightly after snap settles
+    setTimeout(() => {
+      if (soundEffects) {
+        try {
+          completePlayer.volume = volume;
+          completePlayer.seekTo(0);
+          completePlayer.play();
+        } catch {}
+      }
+    }, 180);
+
+    // After a short celebration, start a fresh round
+    setTimeout(() => {
+      const newPuzzle = generateColorPuzzle(diffLevel);
+      setPuzzle(newPuzzle);
+      setMatchedItemIds({});
+      setMatchedTargetIds({});
+      startTimeRef.current = Date.now();
+      missCountRef.current = 0;
+      hitCountRef.current = 0;
+      completionReportedRef.current = false;
+      setResetKey((k) => k + 1);
+    }, 1400);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isComplete]);
 
   // ── Sounds ────────────────────────────────────────────────────
   const playSnap = useCallback(() => {
@@ -365,48 +406,14 @@ export default function MatchingScreen() {
     playPop();
   }, [playPop, soundEffects]);
 
-  // ── Match handler ─────────────────────────────────────────────
+  // ── Match handler — only updates local state, no side effects ──
   const handleMatch = useCallback(
     (itemId: string, targetId: string) => {
       hitCountRef.current += 1;
-      setMatchCounts((prev) => ({
-        ...prev,
-        [targetId]: (prev[targetId] ?? 0) + 1,
-      }));
-      setMatchedItems((prev) => {
-        const next = { ...prev, [itemId]: true };
-        if (Object.keys(next).length === totalItems) {
-          recordSignal({
-            screen: "matching",
-            durationMs: Date.now() - startTimeRef.current,
-            missCount: missCountRef.current,
-            hitCount: hitCountRef.current,
-          });
-          setTimeout(() => {
-            if (soundEffects) {
-              try {
-                completePlayer.volume = volume;
-                completePlayer.seekTo(0);
-                completePlayer.play();
-              } catch {}
-            }
-          }, 180);
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          setTimeout(() => {
-            const newPuzzle = generateColorPuzzle(diffLevel);
-            setPuzzle(newPuzzle);
-            setMatchCounts({});
-            setMatchedItems({});
-            startTimeRef.current = Date.now();
-            missCountRef.current = 0;
-            hitCountRef.current = 0;
-            setResetKey((k) => k + 1);
-          }, 1400);
-        }
-        return next;
-      });
+      setMatchedItemIds((prev) => ({ ...prev, [itemId]: true }));
+      setMatchedTargetIds((prev) => ({ ...prev, [targetId]: true }));
     },
-    [totalItems, diffLevel, recordSignal, soundEffects, volume, completePlayer]
+    []
   );
 
   const handleMiss = useCallback(() => {
@@ -416,11 +423,12 @@ export default function MatchingScreen() {
   const reshufflePuzzle = useCallback(() => {
     const newPuzzle = generateColorPuzzle(diffLevel);
     setPuzzle(newPuzzle);
-    setMatchCounts({});
-    setMatchedItems({});
+    setMatchedItemIds({});
+    setMatchedTargetIds({});
     startTimeRef.current = Date.now();
     missCountRef.current = 0;
     hitCountRef.current = 0;
+    completionReportedRef.current = false;
     setResetKey((k) => k + 1);
   }, [diffLevel]);
 
@@ -441,12 +449,13 @@ export default function MatchingScreen() {
   // Token: cream circle card
   const CARD_SIZE = Math.max(Math.min(Math.floor(SW / 6.5), 140), 78);
   const INNER_SIZE = Math.round(CARD_SIZE * 0.66);
-  const CARD_GAP = Math.max(18, Math.floor(SW * 0.038));
+  const CARD_GAP = Math.max(22, Math.floor(SW * 0.045));
 
-  // Target row centered at 28% of content height
+  // Target row centered at 26% of content height
   const numTargets = puzzle.targets.length;
   const totalTargetW = numTargets * TARGET_W + (numTargets - 1) * TARGET_GAP;
-  const targetStartX = sideSafe + (SW - sideSafe * 2 - totalTargetW) / 2 + sideSafe;
+  const usableW = SW - sideSafe * 2;
+  const targetStartX = sideSafe + (usableW - totalTargetW) / 2;
   const targetCenterY = contentTop + contentH * 0.26;
 
   const targets: TargetWithPos[] = puzzle.targets.map((t, i) => ({
@@ -455,39 +464,25 @@ export default function MatchingScreen() {
     centerY: targetCenterY,
   }));
 
-  // Token positions — single row for ≤4, 2-row grid for more
+  // ── Token positions — always a single horizontal row ──────────
+  // Exactly puzzle.items.length tokens (always equals numTargets since itemsPerColor=1).
   const tokenPositions = useMemo(() => {
     const n = puzzle.items.length;
-    const perRow = n <= 4 ? n : Math.ceil(n / 2);
-    const numRows = Math.ceil(n / perRow);
-
-    const tokenAreaCenterY = contentTop + contentH * 0.73;
-    const totalGridH = numRows * CARD_SIZE + Math.max(0, numRows - 1) * CARD_GAP;
-    const gridStartY = tokenAreaCenterY - totalGridH / 2;
-
-    const positions: Array<{ x: number; y: number }> = [];
-    for (let r = 0; r < numRows; r++) {
-      const rowStart = r * perRow;
-      const rowEnd = Math.min(rowStart + perRow, n);
-      const rowCount = rowEnd - rowStart;
-      const rowW = rowCount * CARD_SIZE + (rowCount - 1) * CARD_GAP;
-      const rowX = sideSafe + (SW - sideSafe * 2 - rowW) / 2 + sideSafe;
-      const rowY = gridStartY + r * (CARD_SIZE + CARD_GAP);
-      for (let c = 0; c < rowCount; c++) {
-        positions.push({
-          x: rowX + c * (CARD_SIZE + CARD_GAP),
-          y: rowY,
-        });
-      }
-    }
-    return positions;
+    const totalRowW = n * CARD_SIZE + (n - 1) * CARD_GAP;
+    const rowX = sideSafe + (usableW - totalRowW) / 2;
+    // Center vertically around 73% of content height
+    const rowY = contentTop + contentH * 0.73 - CARD_SIZE / 2;
+    return puzzle.items.map((_, i) => ({
+      x: rowX + i * (CARD_SIZE + CARD_GAP),
+      y: rowY,
+    }));
   }, [
     puzzle.items.length,
     CARD_SIZE,
     CARD_GAP,
     contentTop,
     contentH,
-    SW,
+    usableW,
     sideSafe,
   ]);
 
@@ -514,7 +509,7 @@ export default function MatchingScreen() {
         </Pressable>
       </View>
 
-      {/* ── Tokens (rendered first — lower z-order) ── */}
+      {/* ── Tokens rendered first (lower z-order, draggable) ── */}
       {puzzle.items.map((item, idx) => {
         const pos = tokenPositions[idx] ?? { x: 40, y: contentTop + 20 };
         return (
@@ -536,7 +531,7 @@ export default function MatchingScreen() {
         );
       })}
 
-      {/* ── Target slots (rendered above tokens) ── */}
+      {/* ── Target slots rendered above tokens ── */}
       {targets.map((t) => (
         <View
           key={t.id}
@@ -551,8 +546,7 @@ export default function MatchingScreen() {
             target={t}
             w={TARGET_W}
             h={TARGET_H}
-            matchCount={matchCounts[t.id] ?? 0}
-            itemsPerColor={itemsPerColor}
+            isMatched={!!matchedTargetIds[t.id]}
           />
         </View>
       ))}

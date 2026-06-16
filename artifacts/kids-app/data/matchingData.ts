@@ -56,9 +56,9 @@ export const MATCHING_CONFIG: Record<
   DiffLevel,
   { numColors: number; itemsPerColor: number }
 > = {
-  1: { numColors: 3, itemsPerColor: 1 }, // 3 items : 3 baskets — strict 1:1
-  2: { numColors: 3, itemsPerColor: 2 }, // 6 items : 3 baskets — 2 per color
-  3: { numColors: 4, itemsPerColor: 2 }, // 8 items : 4 baskets — 2 per color
+  1: { numColors: 3, itemsPerColor: 1 }, // 3 tokens : 3 targets — fixed Coral/Yellow/Teal
+  2: { numColors: 3, itemsPerColor: 1 }, // 3 tokens : 3 targets — random from full palette
+  3: { numColors: 3, itemsPerColor: 1 }, // 3 tokens : 3 targets — random from full palette
 };
 
 // ─── Helpers ───────────────────────────────────────────────────────
