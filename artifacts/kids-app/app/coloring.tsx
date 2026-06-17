@@ -207,11 +207,15 @@ function PngCanvas({
         )}
       </Svg>
 
-      {/* Layer 2: PNG line art — non-interactive so touches reach Layer 1 */}
+      {/* Layer 2: PNG line art — non-interactive so touches reach Layer 1.
+          Must use width/height 100% (not absoluteFill) so the browser
+          <img> element is constrained to the wrapper bounds before
+          object-fit:contain takes effect. absoluteFill sets only
+          position/insets, which is insufficient for <img> sizing on web. */}
       <View style={StyleSheet.absoluteFill} pointerEvents="none">
         <RNImage
           source={image.pngSource!}
-          style={StyleSheet.absoluteFill}
+          style={styles.pngImage}
           resizeMode="contain"
         />
       </View>
@@ -518,6 +522,10 @@ const styles = StyleSheet.create({
   pngCanvasWrapper: {
     flex: 1,
     backgroundColor: "#FFFFFF",
+  },
+  pngImage: {
+    width: "100%",
+    height: "100%",
   },
 
   palette: {
