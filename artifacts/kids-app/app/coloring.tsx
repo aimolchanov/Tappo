@@ -48,10 +48,98 @@ const PALETTE = [
   "#333333",
 ];
 
+// ─── Flood-fill utilities ──────────────────────────────────────────────────
+
+function hexToRgb(hex: string): [number, number, number] {
+  const n = parseInt(hex.replace("#", ""), 16);
+  return [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff];
+}
+
+/**
+ * Span-based scanline flood-fill on raw ImageData.
+ * Returns true if any pixels were changed (valid hit), false for outline tap or same color.
+ * Complexity: O(filled pixels) — fast enough for 2816×1536 PNG regions.
+ */
+function scanlineFill(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  sx: number,
+  sy: number,
+  [fr, fg, fb]: [number, number, number]
+): boolean {
+  const gi = (x: number, y: number) => (y * width + x) * 4;
+  const i0 = gi(sx, sy);
+  const tr = data[i0], tg = data[i0 + 1], tb = data[i0 + 2];
+
+  // Tapped on dark outline → miss
+  if (tr < 60 && tg < 60 && tb < 60) return false;
+  // Already the fill color
+  if (Math.abs(tr - fr) < 10 && Math.abs(tg - fg) < 10 && Math.abs(tb - fb) < 10)
+    return false;
+
+  const isFillable = (x: number, y: number): boolean => {
+    const i = gi(x, y);
+    return (
+      Math.abs(data[i] - tr) < 40 &&
+      Math.abs(data[i + 1] - tg) < 40 &&
+      Math.abs(data[i + 2] - tb) < 40
+    );
+  };
+
+  const visited = new Uint8Array(width * height);
+  const stack: number[] = [sy * width + sx];
+  visited[sy * width + sx] = 1;
+
+  while (stack.length > 0) {
+    const pos = stack.pop()!;
+    const py = Math.floor(pos / width);
+    const px = pos % width;
+
+    // Extend span left then right
+    let lx = px;
+    while (lx > 0 && !visited[py * width + lx - 1] && isFillable(lx - 1, py)) lx--;
+    let rx = px;
+    while (rx < width - 1 && !visited[py * width + rx + 1] && isFillable(rx + 1, py))
+      rx++;
+
+    // Fill and mark span
+    for (let x = lx; x <= rx; x++) {
+      const i = gi(x, py);
+      data[i] = fr;
+      data[i + 1] = fg;
+      data[i + 2] = fb;
+      data[i + 3] = 255;
+      visited[py * width + x] = 1;
+    }
+
+    // Enqueue one seed per connected run in rows above / below
+    for (const ny of [py - 1, py + 1]) {
+      if (ny < 0 || ny >= height) continue;
+      let inSpan = false;
+      for (let x = lx; x <= rx; x++) {
+        const eligible = !visited[ny * width + x] && isFillable(x, ny);
+        if (eligible && !inSpan) {
+          stack.push(ny * width + x);
+          inSpan = true;
+        } else if (!eligible) {
+          inSpan = false;
+        }
+      }
+    }
+  }
+
+  return true;
+}
+
+// ─── SVG helpers ──────────────────────────────────────────────────────────
+
 /** SVG path string that draws an ellipse centered at (cx,cy) with radii rx,ry */
 function ellipsePath(cx: number, cy: number, rx: number, ry: number): string {
   return `M ${cx - rx},${cy} a ${rx},${ry} 0 1,0 ${2 * rx},0 a ${rx},${ry} 0 1,0 ${-2 * rx},0 Z`;
 }
+
+// ─── Small UI components ──────────────────────────────────────────────────
 
 function ColorCircle({
   color,
@@ -121,7 +209,8 @@ function ImageThumb({
   );
 }
 
-/** Region renderer shared by both canvas types */
+// ─── Region renderer (shared by SvgCanvas and native PngCanvas) ───────────
+
 function renderRegionShape(
   region: ColoringRegion,
   fill: string,
@@ -129,7 +218,11 @@ function renderRegionShape(
   showStroke: boolean
 ) {
   const strokeProps = showStroke
-    ? { stroke: "#444" as const, strokeWidth: 2.5, strokeLinejoin: "round" as const }
+    ? {
+        stroke: "#444" as const,
+        strokeWidth: 2.5,
+        strokeLinejoin: "round" as const,
+      }
     : { stroke: "none" as const };
 
   const p = { fill, ...strokeProps, onPress };
@@ -138,9 +231,12 @@ function renderRegionShape(
   if (region.type === "rect") {
     return (
       <Rect
-        key={k} {...p}
-        x={region.x} y={region.y}
-        width={region.width} height={region.height}
+        key={k}
+        {...p}
+        x={region.x}
+        y={region.y}
+        width={region.width}
+        height={region.height}
       />
     );
   }
@@ -150,7 +246,8 @@ function renderRegionShape(
   if (region.type === "ellipse") {
     return (
       <Path
-        key={k} {...p}
+        key={k}
+        {...p}
         d={ellipsePath(region.cx!, region.cy!, region.rx!, region.ry!)}
       />
     );
@@ -158,22 +255,242 @@ function renderRegionShape(
   return <Path key={k} {...p} d={region.d} />;
 }
 
+// ─── Web canvas flood-fill component ─────────────────────────────────────
+
+/**
+ * Web-only canvas with pixel-level scanline flood-fill.
+ *
+ * Image loading strategy:
+ * - A hidden <RNImage ref={imgRef}> is rendered with the same source.
+ * - react-native-web renders that as a DOM <img> (possibly inside a <div>).
+ * - A useEffect accesses imgRef.current (DOM element or wrapper), finds the
+ *   <img> child, and attaches a native DOM "load" listener.
+ * - If the image is already cached/decoded (complete + naturalWidth > 0),
+ *   we draw it synchronously; otherwise we wait for the "load" event.
+ *
+ * Coordinate mapping accounts for object-fit:contain letterboxing so taps
+ * remain pixel-accurate regardless of container shape.
+ */
+function WebColorCanvas({
+  image,
+  onRegionPress,
+  onMiss,
+  selectedColor,
+}: {
+  image: ColoringImage;
+  onRegionPress: (id: string) => void;
+  onMiss: () => void;
+  selectedColor: string;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const loadedRef = useRef(false);
+  const selectedColorRef = useRef(selectedColor);
+  // Persist canvas pixel data across image switches
+  const savedStates = useRef(new Map<string, ImageData>());
+  const prevImageIdRef = useRef(image.id);
+
+  // Keep selectedColor current in event handlers without triggering re-renders
+  useEffect(() => {
+    selectedColorRef.current = selectedColor;
+  }, [selectedColor]);
+
+  // Save canvas state when user switches to a different image
+  useEffect(() => {
+    const prevId = prevImageIdRef.current;
+    if (prevId === image.id) return;
+    const canvas = canvasRef.current;
+    if (canvas && loadedRef.current) {
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        savedStates.current.set(prevId, ctx.getImageData(0, 0, canvas.width, canvas.height));
+      }
+    }
+    loadedRef.current = false;
+    prevImageIdRef.current = image.id;
+  }, [image.id]);
+
+  /**
+   * Called by the hidden <RNImage> onLoad.
+   *
+   * React-native-web's event wrapping drops `nativeEvent.target`, so we
+   * navigate the DOM instead: canvas.parentElement is the shared wrapper div;
+   * querySelector('img') finds the hidden <img> rendered by react-native-web.
+   */
+  const handleSourceLoad = useCallback(
+    (_e: any) => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+
+      // Walk up to the shared wrapper View, then find the hidden <img>
+      const parent = canvas.parentElement;
+      const imgEl = parent?.querySelector<HTMLImageElement>("img");
+      if (!imgEl || !imgEl.naturalWidth) return;
+
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+
+      // Restore previously saved coloring for this image
+      const saved = savedStates.current.get(image.id);
+      if (saved) {
+        canvas.width = saved.width;
+        canvas.height = saved.height;
+        ctx.putImageData(saved, 0, 0);
+        loadedRef.current = true;
+        return;
+      }
+
+      // Draw fresh PNG at full intrinsic resolution
+      canvas.width = imgEl.naturalWidth;
+      canvas.height = imgEl.naturalHeight;
+      try {
+        ctx.drawImage(imgEl, 0, 0);
+        loadedRef.current = true;
+      } catch {
+        // CORS taint fallback: reload via a fresh JS Image
+        const fallback = new (window as any).Image() as HTMLImageElement;
+        fallback.onload = () => {
+          canvas.width = fallback.naturalWidth;
+          canvas.height = fallback.naturalHeight;
+          ctx.drawImage(fallback, 0, 0);
+          loadedRef.current = true;
+        };
+        fallback.src = imgEl.src;
+      }
+    },
+    [image.id]
+  );
+
+  const handlePointer = useCallback(
+    (clientX: number, clientY: number) => {
+      const canvas = canvasRef.current;
+      if (!canvas || !loadedRef.current) return;
+
+      const ctx = canvas.getContext("2d")!;
+      const rect = canvas.getBoundingClientRect();
+
+      // Compute actual image bounds inside the canvas element.
+      // object-fit:contain centers the image; we must account for letterboxing.
+      const canvasAspect = canvas.width / canvas.height;
+      const displayAspect = rect.width / rect.height;
+
+      let imgLeft: number, imgTop: number, imgW: number, imgH: number;
+      if (canvasAspect > displayAspect) {
+        imgW = rect.width;
+        imgH = rect.width / canvasAspect;
+        imgLeft = rect.left;
+        imgTop = rect.top + (rect.height - imgH) / 2;
+      } else {
+        imgH = rect.height;
+        imgW = rect.height * canvasAspect;
+        imgLeft = rect.left + (rect.width - imgW) / 2;
+        imgTop = rect.top;
+      }
+
+      // Tap in the letterbox area → miss
+      if (
+        clientX < imgLeft ||
+        clientX > imgLeft + imgW ||
+        clientY < imgTop ||
+        clientY > imgTop + imgH
+      ) {
+        onMiss();
+        return;
+      }
+
+      // Map CSS pixel → canvas pixel
+      const scaleX = canvas.width / imgW;
+      const scaleY = canvas.height / imgH;
+      const px = Math.max(0, Math.min(canvas.width - 1, Math.floor((clientX - imgLeft) * scaleX)));
+      const py = Math.max(0, Math.min(canvas.height - 1, Math.floor((clientY - imgTop) * scaleY)));
+
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const rgb = hexToRgb(selectedColorRef.current);
+      const filled = scanlineFill(imageData.data, canvas.width, canvas.height, px, py, rgb);
+
+      if (filled) {
+        ctx.putImageData(imageData, 0, 0);
+        onRegionPress(`cf_${Date.now()}`);
+      } else {
+        onMiss();
+      }
+    },
+    [onRegionPress, onMiss]
+  );
+
+  return (
+    <>
+      {/*
+       * Hidden image: key={image.id} forces fresh load on image switch.
+       * onLoad fires with e.nativeEvent = raw DOM Event;
+       * e.nativeEvent.target is the <img> DOM element we draw to the canvas.
+       */}
+      <RNImage
+        key={image.id}
+        source={image.pngSource!}
+        style={styles.hiddenSourceImg}
+        onLoad={handleSourceLoad}
+        resizeMode="contain"
+      />
+      {React.createElement("canvas", {
+        ref: (el: HTMLCanvasElement | null) => {
+          canvasRef.current = el;
+        },
+        onClick: (e: MouseEvent) => handlePointer(e.clientX, e.clientY),
+        onTouchEnd: (e: TouchEvent) => {
+          e.preventDefault();
+          const t = e.changedTouches[0];
+          if (t) handlePointer(t.clientX, t.clientY);
+        },
+        style: {
+          display: "block",
+          width: "100%",
+          height: "100%",
+          objectFit: "contain",
+          cursor: "crosshair",
+          touchAction: "none",
+        },
+      })}
+    </>
+  );
+}
+
+// ─── Canvas components ────────────────────────────────────────────────────
+
 /**
  * Canvas for PNG-based coloring pages.
- *  Layer 1 — SVG colored fills + touch detection (underneath PNG)
- *  Layer 2 — PNG line art on top (non-interactive, touches pass through)
+ *
+ * Web:    HTML5 <canvas> with pixel-level scanline flood-fill.
+ * Native: SVG colored fills (approximate regions) beneath the PNG line art.
  */
 function PngCanvas({
   image,
   fills,
   onRegionPress,
   onMiss,
+  selectedColor,
 }: {
   image: ColoringImage;
   fills: Record<string, string>;
   onRegionPress: (id: string) => void;
   onMiss: () => void;
+  selectedColor: string;
 }) {
+  if (Platform.OS === "web") {
+    return (
+      <View style={styles.pngCanvasWrapper}>
+        <WebColorCanvas
+          image={image}
+          onRegionPress={onRegionPress}
+          onMiss={onMiss}
+          selectedColor={selectedColor}
+        />
+      </View>
+    );
+  }
+
+  // ── Native: SVG region approach ─────────────────────────────────────────
+  // fill="rgba(0,0,0,0)" instead of "transparent" — both are invisible but
+  // rgba(0,0,0,0) is treated as a filled area in react-native-svg hit testing.
   const [, , vwStr, vhStr] = image.viewBox.split(" ");
   const vw = Number(vwStr);
   const vh = Number(vhStr);
@@ -188,30 +505,25 @@ function PngCanvas({
         style={StyleSheet.absoluteFill}
         preserveAspectRatio="xMidYMid meet"
       >
-        {/* Catch-all miss target */}
         <Rect
           x={0}
           y={0}
           width={vw}
           height={vh}
-          fill="transparent"
+          fill="rgba(0,0,0,0)"
           onPress={onMiss}
         />
         {image.regions.map((region) =>
           renderRegionShape(
             region,
-            fills[region.id] ?? "transparent",
+            fills[region.id] ?? "rgba(0,0,0,0)",
             () => onRegionPress(region.id),
             false
           )
         )}
       </Svg>
 
-      {/* Layer 2: PNG line art — non-interactive so touches reach Layer 1.
-          Must use width/height 100% (not absoluteFill) so the browser
-          <img> element is constrained to the wrapper bounds before
-          object-fit:contain takes effect. absoluteFill sets only
-          position/insets, which is insufficient for <img> sizing on web. */}
+      {/* Layer 2: PNG line art — non-interactive, touches pass through */}
       <View style={StyleSheet.absoluteFill} pointerEvents="none">
         <RNImage
           source={image.pngSource!}
@@ -269,7 +581,7 @@ function SvgCanvas({
         y={0}
         width={vw}
         height={vh}
-        fill="transparent"
+        fill="rgba(0,0,0,0)"
         onPress={onMiss}
       />
       {image.regions.map((region) =>
@@ -284,6 +596,8 @@ function SvgCanvas({
     </Svg>
   );
 }
+
+// ─── Main screen ──────────────────────────────────────────────────────────
 
 export default function ColoringScreen() {
   const insets = useSafeAreaInsets();
@@ -426,6 +740,7 @@ export default function ColoringScreen() {
             fills={currentFills}
             onRegionPress={handleRegionPress}
             onMiss={handleMiss}
+            selectedColor={selectedColor}
           />
         ) : (
           <SvgCanvas
@@ -451,6 +766,8 @@ export default function ColoringScreen() {
     </ImageBackground>
   );
 }
+
+// ─── Styles ───────────────────────────────────────────────────────────────
 
 const CIRCLE = 54;
 
@@ -526,6 +843,14 @@ const styles = StyleSheet.create({
   pngImage: {
     width: "100%",
     height: "100%",
+  },
+  hiddenSourceImg: {
+    position: "absolute",
+    width: 1,
+    height: 1,
+    opacity: 0,
+    left: -100,
+    top: -100,
   },
 
   palette: {
