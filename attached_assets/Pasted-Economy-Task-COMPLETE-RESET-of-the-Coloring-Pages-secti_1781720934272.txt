@@ -1,0 +1,32 @@
+Economy Task: COMPLETE RESET of the Coloring Pages section (Раскраски). Delete all existing default placeholder images and completely overwrite the data list to include ONLY these 7 new assets.
+
+Please execute the following steps exactly:
+
+1. Clear Old Assets:
+- Locate the asset directory where the current default coloring page images are stored.
+- DELETE all existing image files inside that specific coloring folder to clean up the workspace and remove the old placeholders.
+
+2. Process and Rename New Uploads:
+- Take the 7 newly attached images from this chat, save them into the cleared coloring assets directory, and rename them precisely as follows:
+    - "Gemini_Generated_Image_f766taf766taf766.png" -> "coloring_owl_central.png"
+    - "Gemini_Generated_Image_r5ybofr5ybofr5yb.png" -> "coloring_mushroom_house.png"
+    - "Gemini_Generated_Image_b3sl7bb3sl7bb3sl.png" -> "coloring_brontosaurus.png"
+    - "Gemini_Generated_Image_i5xfuoi5xfuoi5xf.png" -> "coloring_lion.png"
+    - "Gemini_Generated_Image_i7mhy9i7mhy9i7mh.png" -> "coloring_tugboat.png"
+    - "Gemini_Generated_Image_iwyy1iiwyy1iiwyy.png" -> "coloring_snail.png"
+    - "Gemini_Generated_Image_ht7p6vht7p6vht7p.png" -> "coloring_balloon.png"
+
+3. Overwrite the Coloring Data Structure:
+- Locate the array, JSON file, or state structure that defines the available items for the Coloring screen.
+- COMPLETELY OVERWRITE this data list. Do NOT append or keep any old items. The new list must contain ONLY these 7 new items with their respective local paths and Russian titles:
+    1. Title: "Сова" (Image: "coloring_owl_central.png")
+    2. Title: "Домик-грибок" (Image: "coloring_mushroom_house.png")
+    3. Title: "Динозаврик Бронто" (Image: "coloring_brontosaurus.png")
+    4. Title: "Лев" (Image: "coloring_lion.png")
+    5. Title: "Кораблик Тузик" (Image: "coloring_tugboat.png")
+    6. Title: "Улитка" (Image: "coloring_snail.png")
+    7. Title: "Воздушный шар" (Image: "coloring_balloon.png")
+
+4. Verify:
+- Ensure the code links the updated image paths correctly using `require()` or your existing asset mapping logic.
+- Refresh the preview to ensure the coloring menu displays exactly these 7 clean pages with zero broken references.

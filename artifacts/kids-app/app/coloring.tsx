@@ -3,6 +3,7 @@ import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
+  Image as RNImage,
   ImageBackground,
   Platform,
   Pressable,
@@ -46,6 +47,11 @@ const PALETTE = [
   "#FFFFFF",
   "#333333",
 ];
+
+/** SVG path string that draws an ellipse centered at (cx,cy) with radii rx,ry */
+function ellipsePath(cx: number, cy: number, rx: number, ry: number): string {
+  return `M ${cx - rx},${cy} a ${rx},${ry} 0 1,0 ${2 * rx},0 a ${rx},${ry} 0 1,0 ${-2 * rx},0 Z`;
+}
 
 function ColorCircle({
   color,
@@ -98,15 +104,122 @@ function ImageThumb({
       onPress={onPress}
       style={[
         styles.imageThumbnail,
-        { backgroundColor: image.bgColor },
+        { backgroundColor: image.pngSource ? "#F8F8F8" : image.bgColor },
         isSelected && styles.imageThumbnailSelected,
       ]}
     >
-      <Text style={styles.thumbnailEmoji}>{image.emoji}</Text>
+      {image.pngSource ? (
+        <RNImage
+          source={image.pngSource}
+          style={styles.thumbPng}
+          resizeMode="cover"
+        />
+      ) : (
+        <Text style={styles.thumbnailEmoji}>{image.emoji}</Text>
+      )}
     </Pressable>
   );
 }
 
+/** Region renderer shared by both canvas types */
+function renderRegionShape(
+  region: ColoringRegion,
+  fill: string,
+  onPress: () => void,
+  showStroke: boolean
+) {
+  const strokeProps = showStroke
+    ? { stroke: "#444" as const, strokeWidth: 2.5, strokeLinejoin: "round" as const }
+    : { stroke: "none" as const };
+
+  const p = { fill, ...strokeProps, onPress };
+  const k = region.id;
+
+  if (region.type === "rect") {
+    return (
+      <Rect
+        key={k} {...p}
+        x={region.x} y={region.y}
+        width={region.width} height={region.height}
+      />
+    );
+  }
+  if (region.type === "circle") {
+    return <Circle key={k} {...p} cx={region.cx} cy={region.cy} r={region.r} />;
+  }
+  if (region.type === "ellipse") {
+    return (
+      <Path
+        key={k} {...p}
+        d={ellipsePath(region.cx!, region.cy!, region.rx!, region.ry!)}
+      />
+    );
+  }
+  return <Path key={k} {...p} d={region.d} />;
+}
+
+/**
+ * Canvas for PNG-based coloring pages.
+ *  Layer 1 — SVG colored fills + touch detection (underneath PNG)
+ *  Layer 2 — PNG line art on top (non-interactive, touches pass through)
+ */
+function PngCanvas({
+  image,
+  fills,
+  onRegionPress,
+  onMiss,
+}: {
+  image: ColoringImage;
+  fills: Record<string, string>;
+  onRegionPress: (id: string) => void;
+  onMiss: () => void;
+}) {
+  const [, , vwStr, vhStr] = image.viewBox.split(" ");
+  const vw = Number(vwStr);
+  const vh = Number(vhStr);
+
+  return (
+    <View style={styles.pngCanvasWrapper}>
+      {/* Layer 1: colored fills + touch regions */}
+      <Svg
+        viewBox={image.viewBox}
+        width="100%"
+        height="100%"
+        style={StyleSheet.absoluteFill}
+        preserveAspectRatio="xMidYMid meet"
+      >
+        {/* Catch-all miss target */}
+        <Rect
+          x={0}
+          y={0}
+          width={vw}
+          height={vh}
+          fill="transparent"
+          onPress={onMiss}
+        />
+        {image.regions.map((region) =>
+          renderRegionShape(
+            region,
+            fills[region.id] ?? "transparent",
+            () => onRegionPress(region.id),
+            false
+          )
+        )}
+      </Svg>
+
+      {/* Layer 2: PNG line art — non-interactive so touches reach Layer 1 */}
+      <View style={StyleSheet.absoluteFill} pointerEvents="none">
+        <RNImage
+          source={image.pngSource!}
+          style={StyleSheet.absoluteFill}
+          resizeMode="contain"
+        />
+      </View>
+    </View>
+  );
+}
+
+/** Canvas for legacy SVG-only coloring pages */
 function SvgCanvas({
   image,
   fills,
@@ -118,45 +231,10 @@ function SvgCanvas({
   onRegionPress: (id: string) => void;
   onMiss: () => void;
 }) {
-  const renderRegion = (region: ColoringRegion) => {
-    const fill = fills[region.id] ?? region.defaultColor;
-    const regionProps = {
-      fill,
-      stroke: "#444",
-      strokeWidth: 2.5,
-      strokeLinejoin: "round" as const,
-      onPress: () => onRegionPress(region.id),
-    };
-
-    if (region.type === "circle") {
-      return (
-        <Circle key={region.id} {...regionProps} cx={region.cx} cy={region.cy} r={region.r} />
-      );
-    }
-    if (region.type === "ellipse") {
-      return (
-        <Circle
-          key={region.id}
-          {...regionProps}
-          cx={region.cx}
-          cy={region.cy}
-          r={(region.rx ?? 30 + (region.ry ?? 30)) / 2}
-        />
-      );
-    }
-    return <Path key={region.id} {...regionProps} d={region.d} />;
-  };
-
   const renderDecoration = (dec: ColoringDecoration, idx: number) => {
     if (dec.type === "circle") {
       return (
-        <Circle
-          key={`d${idx}`}
-          cx={dec.cx}
-          cy={dec.cy}
-          r={dec.r}
-          fill="#444"
-        />
+        <Circle key={`d${idx}`} cx={dec.cx} cy={dec.cy} r={dec.r} fill="#444" />
       );
     }
     return (
@@ -171,7 +249,9 @@ function SvgCanvas({
     );
   };
 
-  const [, , vw, vh] = image.viewBox.split(" ").map(Number);
+  const [, , vwStr, vhStr] = image.viewBox.split(" ");
+  const vw = Number(vwStr);
+  const vh = Number(vhStr);
 
   return (
     <Svg
@@ -180,9 +260,22 @@ function SvgCanvas({
       height="100%"
       preserveAspectRatio="xMidYMid meet"
     >
-      {/* Transparent catch-all for taps that miss every region */}
-      <Rect x={0} y={0} width={vw} height={vh} fill="transparent" onPress={onMiss} />
-      {image.regions.map(renderRegion)}
+      <Rect
+        x={0}
+        y={0}
+        width={vw}
+        height={vh}
+        fill="transparent"
+        onPress={onMiss}
+      />
+      {image.regions.map((region) =>
+        renderRegionShape(
+          region,
+          fills[region.id] ?? region.defaultColor,
+          () => onRegionPress(region.id),
+          true
+        )
+      )}
       {image.decorations?.map(renderDecoration)}
     </Svg>
   );
@@ -195,31 +288,33 @@ export default function ColoringScreen() {
   const { difficulty, recordSignal } = useDifficulty();
   const maxComplexity = LEVEL_TO_MAX_COLORING[difficulty];
 
-  // Filter images to those appropriate for current difficulty level
   const availableImages = COLORING_IMAGES.filter(
     (img) => img.complexity <= maxComplexity
   );
 
-  const [currentId, setCurrentId] = useState(availableImages[0]?.id ?? COLORING_IMAGES[0].id);
+  const [currentId, setCurrentId] = useState(
+    availableImages[0]?.id ?? COLORING_IMAGES[0].id
+  );
   const [selectedColor, setSelectedColor] = useState(PALETTE[0]);
   const [selectedColorIdx, setSelectedColorIdx] = useState(0);
   const [allFills, setAllFills] = useState<
     Record<string, Record<string, string>>
   >({});
 
-  // Tracking refs for adaptive difficulty signal
   const startTimeRef = useRef(Date.now());
   const missCountRef = useRef(0);
   const hitCountRef = useRef(0);
+  const completionReportedRef = useRef(false);
 
-  // Reset tracking counters when image changes
+  // Reset tracking on image change
   useEffect(() => {
     startTimeRef.current = Date.now();
     missCountRef.current = 0;
     hitCountRef.current = 0;
+    completionReportedRef.current = false;
   }, [currentId]);
 
-  // When difficulty changes, ensure selected image is still available
+  // Ensure selected image is valid for current difficulty
   useEffect(() => {
     if (!availableImages.find((img) => img.id === currentId)) {
       setCurrentId(availableImages[0]?.id ?? COLORING_IMAGES[0].id);
@@ -233,38 +328,40 @@ export default function ColoringScreen() {
     COLORING_IMAGES[0];
   const currentFills = allFills[currentId] ?? {};
 
+  // Completion detection — safe, never inside a setState updater
+  const filledCount = Object.keys(currentFills).length;
+  const isComplete = filledCount >= currentImage.regions.length;
+
+  useEffect(() => {
+    if (!isComplete || completionReportedRef.current) return;
+    completionReportedRef.current = true;
+    recordSignal({
+      screen: "coloring",
+      durationMs: Date.now() - startTimeRef.current,
+      missCount: missCountRef.current,
+      hitCount: hitCountRef.current,
+    });
+  }, [isComplete, currentId, recordSignal]);
+
   const handleMiss = useCallback(() => {
     missCountRef.current += 1;
   }, []);
 
-  const handleRegionPress = useCallback((regionId: string) => {
-    hitCountRef.current += 1;
-
-    setAllFills((prev) => {
-      const next = {
+  const handleRegionPress = useCallback(
+    (regionId: string) => {
+      hitCountRef.current += 1;
+      setAllFills((prev) => ({
         ...prev,
         [currentId]: {
           ...(prev[currentId] ?? {}),
           [regionId]: selectedColor,
         },
-      };
-
-      // Check if all regions are now filled → record signal
-      const filled = Object.keys(next[currentId] ?? {}).length;
-      if (filled === currentImage.regions.length) {
-        recordSignal({
-          screen: "coloring",
-          durationMs: Date.now() - startTimeRef.current,
-          missCount: missCountRef.current,
-          hitCount: hitCountRef.current,
-        });
-      }
-
-      return next;
-    });
-    playPop();
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  }, [currentId, selectedColor, currentImage.regions.length, recordSignal, playPop]);
+      }));
+      playPop();
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    },
+    [currentId, selectedColor, playPop]
+  );
 
   const handleColorSelect = (color: string, idx: number) => {
     setSelectedColor(color);
@@ -312,14 +409,28 @@ export default function ColoringScreen() {
         </ScrollView>
       </View>
 
-      {/* ── SVG canvas ── */}
-      <View style={styles.canvasContainer}>
-        <SvgCanvas
-          image={currentImage}
-          fills={currentFills}
-          onRegionPress={handleRegionPress}
-          onMiss={handleMiss}
-        />
+      {/* ── Canvas ── */}
+      <View
+        style={[
+          styles.canvasContainer,
+          { backgroundColor: currentImage.bgColor },
+        ]}
+      >
+        {currentImage.pngSource ? (
+          <PngCanvas
+            image={currentImage}
+            fills={currentFills}
+            onRegionPress={handleRegionPress}
+            onMiss={handleMiss}
+          />
+        ) : (
+          <SvgCanvas
+            image={currentImage}
+            fills={currentFills}
+            onRegionPress={handleRegionPress}
+            onMiss={handleMiss}
+          />
+        )}
       </View>
 
       {/* ── Colour palette ── */}
@@ -344,7 +455,6 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 
-  // ── Top bar ──
   topBar: {
     height: 80,
     flexDirection: "row",
@@ -379,6 +489,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderWidth: 3,
     borderColor: "transparent",
+    overflow: "hidden",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
@@ -392,17 +503,23 @@ const styles = StyleSheet.create({
   thumbnailEmoji: {
     fontSize: 34,
   },
+  thumbPng: {
+    width: 64,
+    height: 64,
+  },
 
-  // ── Canvas ──
   canvasContainer: {
     flex: 1,
     marginHorizontal: 8,
     borderRadius: 24,
     overflow: "hidden",
-    backgroundColor: "rgba(255,255,255,0.6)",
   },
 
-  // ── Palette ──
+  pngCanvasWrapper: {
+    flex: 1,
+    backgroundColor: "#FFFFFF",
+  },
+
   palette: {
     height: 86,
     flexDirection: "row",
