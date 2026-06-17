@@ -44,9 +44,9 @@ const PUZZLE_IMAGES = [
 // ─── Constants ───────────────────────────────────────────────────
 const HEADER_H = 68;
 const PIECE_GAP = 6;   // gap between adjacent pieces (visible as thin grid lines)
-const TRAY_VPAD = 14;  // vertical padding inside tray dock
-const TRAY_HPAD = 22;  // horizontal padding inside tray dock
-const PIECE_GAP_TRAY = 12; // spacing between pieces in tray
+const TRAY_VPAD = 18;  // vertical padding inside tray dock
+const TRAY_HPAD = 28;  // horizontal padding inside tray dock
+const PIECE_GAP_TRAY = 16; // spacing between pieces in tray
 
 // ─── Types ───────────────────────────────────────────────────────
 interface PieceConfig {
@@ -370,32 +370,39 @@ export default function PuzzlesScreen() {
   const contentH = SH - contentTop - botSafe - 8;
   const contentW = SW - insets.left - insets.right;
 
-  // Tray row config — try to keep pieces in one row, 2 rows for larger counts
-  const piecesPerTrayRow = totalPieces <= 5 ? totalPieces : Math.ceil(totalPieces / 2);
+  // Tray row config:
+  //   ≤ 6 pieces → single row (avoids the tray-height bottleneck that crushed
+  //     piece size on landscape tablets; 6-piece 3×2 grid fits in 1 wide row)
+  //   > 6 pieces → 2 rows
+  const piecesPerTrayRow = totalPieces <= 6 ? totalPieces : Math.ceil(totalPieces / 2);
   const trayNumRows = Math.ceil(totalPieces / piecesPerTrayRow);
 
-  // Reserve ~30% of content height for tray area (including dock + gaps)
-  const trayAreaH = Math.max(90, contentH * 0.30);
-  const boardAreaH = contentH - trayAreaH - 20; // 20px gap between board and tray
+  // Reserve ~38% of content height for tray area — larger allocation lets
+  // the single-row tray be tall enough to hold bigger pieces.
+  const BOARD_TRAY_GAP = 28;
+  const trayAreaH = Math.max(100, contentH * 0.38);
+  const boardAreaH = contentH - trayAreaH - BOARD_TRAY_GAP;
 
-  // Piece size = minimum of 4 constraints so nothing overflows
+  // Piece size = minimum of 4 constraints so nothing overflows.
+  // Hard cap raised to 280 so large landscape tablets (iPad Pro, etc.) can
+  // display the pieces at a comfortably child-grabbable size.
   const pieceSize = Math.max(
-    44,
+    56,
     Math.min(
       // Board height: fit `rows` pieces vertically
       Math.floor((boardAreaH - PIECE_GAP * (rows - 1)) / rows),
-      // Board width: board occupies at most 84% of screen width
-      Math.floor((contentW * 0.84 - PIECE_GAP * (cols - 1)) / cols),
+      // Board width: board uses up to 92% of screen width (was 84%)
+      Math.floor((contentW * 0.92 - PIECE_GAP * (cols - 1)) / cols),
       // Tray height: fit `trayNumRows` pieces inside tray dock
       Math.floor((trayAreaH - TRAY_VPAD * 2 - PIECE_GAP_TRAY * (trayNumRows - 1)) / trayNumRows),
       // Tray width: fit `piecesPerTrayRow` pieces across full screen width
       Math.floor((contentW - TRAY_HPAD * 2 - PIECE_GAP_TRAY * (piecesPerTrayRow - 1)) / piecesPerTrayRow),
-      190 // hard cap
+      280 // hard cap (was 190)
     )
   );
 
-  // Snap threshold: at least 25px, scales gently with piece size
-  const snapDist = Math.max(25, Math.round(pieceSize * 0.20));
+  // Snap threshold: 25% of piece size — more forgiving for small hands
+  const snapDist = Math.max(28, Math.round(pieceSize * 0.25));
 
   // Board dimensions and absolute position
   const boardW = pieceSize * cols + PIECE_GAP * (cols - 1);
@@ -409,7 +416,7 @@ export default function PuzzlesScreen() {
   const trayContainerH =
     trayNumRows * pieceSize + (trayNumRows - 1) * PIECE_GAP_TRAY + TRAY_VPAD * 2;
   const trayX = insets.left + Math.floor((contentW - trayContainerW) / 2);
-  const trayY = contentTop + boardAreaH + 20;
+  const trayY = contentTop + boardAreaH + BOARD_TRAY_GAP;
 
   // Starting X for the first tray piece (centered inside dock)
   const trayPieceStartX = trayX + Math.floor((trayContainerW - trayRowW) / 2);
@@ -581,8 +588,7 @@ export default function PuzzlesScreen() {
 
       {/* ── Draggable pieces (float over board and tray) ── */}
       <Reanimated.View
-        style={[StyleSheet.absoluteFill, celebStyle, { zIndex: 10 }]}
-        pointerEvents="box-none"
+        style={[StyleSheet.absoluteFill, celebStyle, { zIndex: 10, pointerEvents: "box-none" }]}
       >
         {pieces.map((config) => (
           <PuzzlePieceView
