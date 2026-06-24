@@ -1,0 +1,378 @@
+# Tappo — Cursor Rules
+
+## Project overview
+
+**Tappo** — детское образовательное приложение для детей 2–5 лет.
+Монорепозиторий на TypeScript/Node.js 24, размещён на Replit.
+
+Три деплоймент-артефакта:
+- `artifacts/kids-app` — мобильное приложение Expo/React Native (порт 18545)
+- `artifacts/api-server` — Express 5 API (порт 8080, путь `/api`)
+- `artifacts/mockup-sandbox` — Vite + shadcn/ui дизайн-превью (порт 8081, путь `/__mockup`)
+
+Четыре общие библиотеки в `lib/`:
+- `@workspace/db` — Drizzle ORM + Postgres-клиент
+- `@workspace/api-spec` — OpenAPI 3.1 спецификация + конфиг Orval
+- `@workspace/api-zod` — Zod-схемы, сгенерированные из OpenAPI (не редактировать вручную)
+- `@workspace/api-client-react` — React Query хуки, сгенерированные из OpenAPI (не редактировать вручную)
+
+---
+
+## Пакетный менеджер
+
+**Всегда использовать `pnpm`.** npm и yarn заблокированы `preinstall`-хуком.
+
+```bash
+# Установка зависимостей
+pnpm install
+
+# Запуск конкретного пакета
+pnpm --filter @workspace/<pkg> run <script>
+
+# Добавление зависимости в конкретный пакет
+pnpm --filter @workspace/<pkg> add <dep>
+
+# Добавление dev-зависимости в корень
+pnpm add -Dw <dep>
+```
+
+Версии общих зависимостей фиксируются через **pnpm catalog** в `pnpm-workspace.yaml`. При добавлении React, Vite, Drizzle, Tailwind, Zod или React Query используй `catalog:` вместо конкретной версии.
+
+Ссылки между пакетами монорепо — через протокол `workspace:*`.
+
+---
+
+## TypeScript
+
+Базовая конфигурация в `tsconfig.base.json`. Все пакеты расширяют её.
+
+Ключевые флаги (не отключать без веской причины):
+- `strict` / `noImplicitAny` / `strictNullChecks` — включены
+- `noImplicitReturns` / `noFallthroughCasesInSwitch` — включены
+- `moduleResolution: "bundler"` — использовать везде
+- `target / lib: "es2022"`
+
+Правила:
+- Не использовать `any` — если тип неизвестен, писать `unknown` и сужать его.
+- Не использовать `// @ts-ignore` — исправлять тип корректно.
+- Не использовать `as T` для обхода проверок — только для легитимного сужения.
+- Типы в стиле `type Foo = { ... }`, не `interface Foo { ... }` (исключение — публичные API библиотек).
+- Генерированные файлы в `lib/api-zod/src/` и `lib/api-client-react/src/` **не редактировать вручную**.
+
+Проверка типов по всему монорепо:
+```bash
+pnpm run typecheck
+```
+
+---
+
+## OpenAPI-first API-контракт
+
+Единственный источник истины для API — `lib/api-spec/openapi.yaml`.
+
+**Порядок работы с API:**
+1. Сначала отредактировать `lib/api-spec/openapi.yaml`.
+2. Запустить кодогенерацию:
+   ```bash
+   pnpm --filter @workspace/api-spec run codegen
+   ```
+3. Кодогенерация перезапишет:
+   - `lib/api-zod/src/` — Zod-схемы для валидации на сервере
+   - `lib/api-client-react/src/` — React Query хуки для клиента
+4. Реализовать роут в `artifacts/api-server/src/routes/`.
+
+Никогда не редактировать `lib/api-zod/` и `lib/api-client-react/` напрямую.
+
+---
+
+## База данных (Drizzle ORM + PostgreSQL)
+
+Схема: `lib/db/src/schema/` — единственное место определения таблиц.
+
+```bash
+# Применить изменения схемы к БД (только для разработки)
+pnpm --filter @workspace/db run push
+
+# Использование клиента
+import { db } from "@workspace/db";
+```
+
+Правила:
+- Определять таблицы только в `lib/db/src/schema/`.
+- Для получения Zod-схем вставки использовать `drizzle-zod` (`createInsertSchema`).
+- `drizzle-kit push` — только для dev-окружения; для прода использовать миграции.
+- `DATABASE_URL` обязателен — без него `lib/db` падает при старте.
+
+---
+
+## Express API-сервер (`artifacts/api-server`)
+
+- Express 5, TypeScript, esbuild-бандл в `.mjs` формате.
+- Все роуты монтируются под `/api` (см. `app.ts`).
+- Логирование через `pino` / `pino-http` — не использовать `console.log`.
+- Валидация входных данных через Zod-схемы из `@workspace/api-zod`.
+- Переменные окружения:
+  - `DATABASE_URL` — обязательна
+  - `PORT` — порт сервера (по умолчанию 8080 на Replit)
+  - `NODE_ENV` — `development` / `production`
+
+```bash
+pnpm --filter @workspace/api-server run dev    # dev-режим
+pnpm --filter @workspace/api-server run build  # сборка
+```
+
+---
+
+## Expo / React Native приложение (`artifacts/kids-app`)
+
+### Маршрутизация (Expo Router)
+
+- Файловая маршрутизация через `app/` — каждый файл = роут.
+- Псевдоним `@/` → корень пакета `artifacts/kids-app/`.
+- Навигация: `router.push("/coloring")`, `router.replace("/")`, `router.back()`.
+- Ориентация: **только альбомная** (landscape) — не добавлять стили для портретной.
+
+Существующие экраны:
+| Файл | Экран |
+|------|-------|
+| `app/index.tsx` | Главное меню |
+| `app/coloring.tsx` | Раскраски |
+| `app/drawing.tsx` | Рисование (Skia) |
+| `app/music.tsx` | Музыка |
+| `app/puzzles.tsx` | Пазлы |
+| `app/matching.tsx` | Найди пару |
+| `app/my-works.tsx` | Мои работы |
+| `app/settings.tsx` | Настройки |
+
+### Провайдеры (порядок важен)
+
+```tsx
+// app/_layout.tsx — строго соблюдать порядок
+<SafeAreaProvider>
+  <ErrorBoundary>
+    <SettingsProvider>
+      <DifficultyProvider>
+        <GestureHandlerRootView>
+          {/* экраны */}
+        </GestureHandlerRootView>
+      </DifficultyProvider>
+    </SettingsProvider>
+  </ErrorBoundary>
+</SafeAreaProvider>
+```
+
+### Настройки приложения (SettingsContext)
+
+Читать настройки в любом экране/хуке:
+```tsx
+import { useAppSettings } from "@/contexts/SettingsContext";
+const { soundEffects, volume, ageGroup, language } = useAppSettings();
+```
+
+Писать настройки **только в `app/settings.tsx`**:
+```tsx
+import { useSettings } from "@/hooks/useSettings";
+const { settings, update, resetAll } = useSettings();
+update({ volume: 0.5 });
+```
+
+Правило: `useSettings()` вызывать только внутри `SettingsProvider` и только в экране настроек. Все остальные компоненты используют `useAppSettings()`.
+
+### Система адаптивной сложности (DifficultyContext)
+
+Читать уровень сложности:
+```tsx
+import { useDifficulty } from "@/contexts/DifficultyContext";
+const { level } = useDifficulty(); // 1 | 2 | 3
+```
+
+Записывать сигналы после завершения задания:
+```tsx
+import { useDifficulty } from "@/contexts/DifficultyContext";
+const { recordSignal } = useDifficulty();
+recordSignal({ screen: "puzzle", durationMs, missCount, hitCount });
+```
+
+**Все настраиваемые числовые пороги** (условия повышения/понижения сложности, размеры кнопок, параметры пазлов) — **только в `constants/difficulty.ts`**. Не вносить магические числа прямо в компоненты.
+
+Уровни:
+- Level 1: пазл 2×2, кнопки 110%, самые простые раскраски
+- Level 2: пазл 3×2, кнопки 100%
+- Level 3: пазл 3×3, кнопки 100%
+
+### Аудио (expo-audio)
+
+```tsx
+// Всегда устанавливать volume перед play()
+player.volume = volumeRef.current; // сначала
+player.seekTo(0);
+player.play();
+```
+
+В колбэках `useCallback` / `setTimeout` / PanResponder — использовать **refs**, а не прямые значения из хука (иначе closure захватит устаревшее значение):
+```tsx
+const soundEffectsRef = useRef(soundEffects);
+const volumeRef = useRef(volume);
+useEffect(() => { soundEffectsRef.current = soundEffects; }, [soundEffects]);
+useEffect(() => { volumeRef.current = volume; }, [volume]);
+```
+
+### Skia (react-native-skia) на вебе
+
+`@shopify/react-native-skia` падает на Expo Web с ошибкой `CanvasKit is not defined`.
+
+Обязательный паттерн для экранов с Skia:
+```tsx
+function ScreenNative() {
+  // все хуки + Skia Canvas здесь
+}
+
+function WebStub() {
+  return <View><Text>Недоступно в браузере</Text></View>;
+}
+
+// Wrapper не содержит хуков — ранний return валиден
+export default function Screen() {
+  if (Platform.OS === 'web') return <WebStub />;
+  return <ScreenNative />;
+}
+```
+
+Никогда не вызывать Skia API до хуков и не ставить проверку `Platform.OS` между вызовами хуков.
+
+### React Native Web — Image.onLoad
+
+В этой версии Expo Web `e.nativeEvent.target` и `e.nativeEvent.source.uri` в `onLoad` — `undefined` (RNW обрезает их при синтезе события).
+
+Рабочий паттерн:
+```tsx
+const handleSourceLoad = useCallback((_e: any) => {
+  const canvas = canvasRef.current;
+  if (!canvas) return;
+  // canvas и <img> находятся в одном parent <div> (RNW View)
+  const imgEl = canvas.parentElement?.querySelector<HTMLImageElement>("img");
+  if (!imgEl || !imgEl.naturalWidth) return;
+  ctx.drawImage(imgEl, 0, 0);
+}, [imageId]);
+```
+
+Не привязывать `ref` к `<Image>` из react-native на вебе — это ломает рендер компонента и его соседей.
+
+### Шрифты
+
+В приложении используются только:
+- **Fredoka** (`Fredoka_600SemiBold`, `Fredoka_700Bold`) — заголовки, игровые элементы
+- **Nunito** (`Nunito_700Bold`, `Nunito_800ExtraBold`) — UI-текст
+
+Не добавлять другие шрифты без явной необходимости.
+
+```bash
+pnpm --filter @workspace/kids-app run dev   # Expo dev-сервер
+```
+
+---
+
+## Дизайн-превью (`artifacts/mockup-sandbox`)
+
+- Vite 7 + React 19 + Tailwind CSS 4 + shadcn/ui (стиль "new-york")
+- Компоненты-мокапы добавлять в `src/components/mockups/`
+- `mockupPreviewPlugin` автоматически подхватывает новые мокапы при горячей перезагрузке
+- Радикс UI + framer-motion + recharts + shadcn/ui уже установлены
+
+```bash
+pnpm --filter @workspace/mockup-sandbox run dev
+```
+
+---
+
+## Переменные окружения
+
+| Переменная | Где нужна | Описание |
+|-----------|-----------|---------|
+| `DATABASE_URL` | `lib/db`, drizzle-kit | Строка подключения PostgreSQL |
+| `PORT` | api-server, mockup-sandbox | HTTP-порт |
+| `BASE_PATH` | mockup-sandbox, kids-app serve | URL base path |
+| `NODE_ENV` | api-server | `development` / `production` |
+| `REPLIT_DEV_DOMAIN` | kids-app dev | Expo dev hostname |
+| `EXPO_PUBLIC_DOMAIN` | kids-app build | Прод-домен |
+
+---
+
+## Ключевые команды
+
+```bash
+# Разработка
+pnpm --filter @workspace/api-server run dev       # API (порт 8080)
+pnpm --filter @workspace/kids-app run dev         # Expo (порт 18545)
+pnpm --filter @workspace/mockup-sandbox run dev   # Дизайн-превью (порт 8081)
+
+# Типизация и сборка
+pnpm run typecheck                                # Проверка типов по всему монорепо
+pnpm run build                                    # typecheck + сборка всех пакетов
+
+# API и БД
+pnpm --filter @workspace/api-spec run codegen     # Регенерация API-клиента и Zod-схем
+pnpm --filter @workspace/db run push              # Применить схему к БД (только dev)
+```
+
+---
+
+## Правила для агента / ИИ-ассистента
+
+### Что делать
+
+- Использовать только `pnpm`; при добавлении зависимостей — `pnpm --filter @workspace/<pkg> add`.
+- Запускать `pnpm run typecheck` после изменений; не коммитить код с ошибками типов.
+- При изменении API — сначала OpenAPI-спека, потом кодогенерация, потом реализация.
+- При изменении схемы БД — только `lib/db/src/schema/`, затем `pnpm --filter @workspace/db run push`.
+- Для логирования в API-сервере — `logger` из `lib/logger`, не `console.log`.
+- При добавлении нового экрана в kids-app — регистрировать в `app/_layout.tsx` и следовать паттерну `<Stack.Screen name="..." />`.
+- Аудио — устанавливать `player.volume` перед `seekTo` + `play`; для асинхронных контекстов — использовать refs.
+- Числовые пороги адаптивной сложности — только в `constants/difficulty.ts`.
+
+### Что не делать
+
+- Не редактировать файлы в `lib/api-zod/src/` и `lib/api-client-react/src/` вручную.
+- Не использовать `npm` или `yarn`.
+- Не вызывать Skia API на вебе без `Platform.OS === 'web'` guard.
+- Не вызывать `useSettings()` за пределами компонента настроек.
+- Не добавлять `// @ts-ignore` или приведение через `as any`.
+- Не обращаться к `e.nativeEvent.target` в `Image.onLoad` на вебе.
+- Не изменять порядок провайдеров в `app/_layout.tsx`.
+- Не добавлять стили под портретную ориентацию — приложение только landscape.
+- Не фиксировать версию React выше `19.1.0` без проверки совместимости с Expo SDK ~54.
+- Не использовать `console.log` в production-коде API-сервера.
+
+---
+
+## Структура репозитория
+
+```
+/workspace
+├── artifacts/
+│   ├── api-server/           # Express 5 API
+│   │   └── src/
+│   │       ├── app.ts        # Express app (middleware, cors, pino)
+│   │       ├── routes/       # Роуты API
+│   │       └── lib/          # Утилиты (logger и др.)
+│   ├── kids-app/             # Expo/React Native приложение Tappo
+│   │   ├── app/              # Экраны (Expo Router файловая маршрутизация)
+│   │   ├── components/       # Переиспользуемые компоненты
+│   │   ├── contexts/         # SettingsContext, DifficultyContext
+│   │   ├── hooks/            # useSettings, useAdaptiveDifficulty, usePopSound
+│   │   ├── constants/        # difficulty.ts и прочие константы
+│   │   └── assets/           # Изображения, звуки, SVG
+│   └── mockup-sandbox/       # Vite дизайн-канва
+│       └── src/
+│           └── components/mockups/  # Компоненты-мокапы для превью
+├── lib/
+│   ├── api-spec/             # openapi.yaml + orval.config.ts
+│   ├── api-client-react/     # СГЕНЕРИРОВАНО — не редактировать
+│   ├── api-zod/              # СГЕНЕРИРОВАНО — не редактировать
+│   └── db/                   # Drizzle schema, Postgres клиент
+├── scripts/                  # Служебные скрипты (tsx)
+├── .agents/memory/           # Документация паттернов для агентов
+├── tsconfig.base.json        # Базовый TS-конфиг монорепо
+├── pnpm-workspace.yaml       # Workspaces + catalog версий
+└── replit.md                 # Документация проекта
+```
