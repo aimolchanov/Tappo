@@ -28,9 +28,14 @@ import {
 } from "react-native";
 
 import {
+  AlphaType,
+  BlurMask,
   Canvas,
+  ColorType,
+  Image as SkiaImage,
   Path,
   Skia,
+  SkImage,
   SkPath,
   useCanvasRef,
 } from "@shopify/react-native-skia";
@@ -41,7 +46,11 @@ import Reanimated, {
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { hexToRgb, scanlineFill } from "@/utils/floodFill";
+
 const GAMES_BG = require("@/assets/images/games_background.png");
+
+const CANVAS_BG = "#FFFFFF";
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 // Edit these to change the palette and brush sizes.
@@ -66,6 +75,32 @@ const PALETTE = [
 const BRUSH_SIZES = [5, 14, 26] as const;
 type BrushSize = (typeof BRUSH_SIZES)[number];
 
+/** Available drawing tools */
+type Tool = "brush" | "pencil" | "bucket" | "eraser";
+
+const TOOL_META: { tool: Tool; emoji: string }[] = [
+  { tool: "brush", emoji: "🖌" },
+  { tool: "pencil", emoji: "✏️" },
+  { tool: "bucket", emoji: "🪣" },
+  { tool: "eraser", emoji: "🧹" },
+];
+
+/** Per-tool stroke appearance derived from the selected color + thickness. */
+function strokeParams(
+  tool: Tool,
+  color: string,
+  size: number
+): { color: string; width: number; blur: number } {
+  if (tool === "pencil") {
+    return { color, width: Math.max(2, Math.round(size * 0.5)), blur: 0 };
+  }
+  if (tool === "eraser") {
+    return { color: CANVAS_BG, width: Math.round(size * 1.4), blur: 0 };
+  }
+  // brush — soft edge
+  return { color, width: size, blur: 2 };
+}
+
 // ─── Saves directory ─────────────────────────────────────────────────────────
 const SAVE_DIR = FileSystem.documentDirectory + "my_works/";
 
@@ -80,7 +115,8 @@ async function ensureSaveDir() {
 interface Stroke {
   path: SkPath;
   color: string;
-  width: BrushSize;
+  width: number;
+  blur: number; // soft edge for the brush; 0 for pencil/eraser
 }
 
 // ─── Colour Circle ────────────────────────────────────────────────────────────
@@ -117,14 +153,43 @@ function ColorCircle({
   );
 }
 
-// ─── Brush Size Button ────────────────────────────────────────────────────────
-function BrushBtn({
-  size,
+// ─── Tool Button (vertical toolbar) ───────────────────────────────────────────
+function ToolButton({
+  emoji,
+  selected,
+  onPress,
+}: {
+  emoji: string;
+  selected: boolean;
+  onPress: () => void;
+}) {
+  const scale = useSharedValue(selected ? 1 : 0.92);
+
+  useEffect(() => {
+    scale.value = withSpring(selected ? 1.08 : 1, { damping: 12, stiffness: 320 });
+  }, [selected, scale]);
+
+  const style = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
+
+  return (
+    <Pressable onPress={onPress} hitSlop={6}>
+      <Reanimated.View
+        style={[styles.toolBtn, selected && styles.toolBtnSelected, style]}
+      >
+        <Text style={styles.toolEmoji}>{emoji}</Text>
+      </Reanimated.View>
+    </Pressable>
+  );
+}
+
+// ─── Thickness dot (used inside the popup) ────────────────────────────────────
+function ThicknessDot({
   dotPx,
   selected,
   onPress,
 }: {
-  size: BrushSize;
   dotPx: number;
   selected: boolean;
   onPress: () => void;
@@ -132,7 +197,7 @@ function BrushBtn({
   return (
     <Pressable
       onPress={onPress}
-      style={[styles.brushBtn, selected && styles.brushBtnSelected]}
+      style={[styles.thicknessOption, selected && styles.thicknessOptionSelected]}
       hitSlop={8}
     >
       <View
@@ -252,6 +317,10 @@ function DrawingScreenNative() {
   const [, setTick] = useState(0); // forces canvas re-render on move
   const [selectedColor, setSelectedColor] = useState(PALETTE[0]);
   const [brushSize, setBrushSize] = useState<BrushSize>(BRUSH_SIZES[1]);
+  const [selectedTool, setSelectedTool] = useState<Tool>("brush");
+  const [baseImage, setBaseImage] = useState<SkImage | null>(null);
+  const [showThickness, setShowThickness] = useState(false);
+  const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0 });
   const [showErase, setShowErase] = useState(false);
   const [showSave, setShowSave] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -259,6 +328,10 @@ function DrawingScreenNative() {
   // Refs for PanResponder closures (avoid stale state)
   const selectedColorRef = useRef(selectedColor);
   const brushSizeRef = useRef(brushSize);
+  const selectedToolRef = useRef(selectedTool);
+  const canvasSizeRef = useRef(canvasSize);
+  const blockDrawRef = useRef(false);
+  const doBucketRef = useRef<(x: number, y: number) => void>(() => {});
   const currentPathRef = useRef<SkPath | null>(null);
   const lastPtRef = useRef<{ x: number; y: number } | null>(null);
   const rafRef = useRef<ReturnType<typeof requestAnimationFrame> | null>(null);
@@ -266,16 +339,72 @@ function DrawingScreenNative() {
 
   useEffect(() => { selectedColorRef.current = selectedColor; }, [selectedColor]);
   useEffect(() => { brushSizeRef.current = brushSize; }, [brushSize]);
+  useEffect(() => { selectedToolRef.current = selectedTool; }, [selectedTool]);
+  useEffect(() => { canvasSizeRef.current = canvasSize; }, [canvasSize]);
+  useEffect(() => {
+    blockDrawRef.current = showErase || showThickness || saving;
+  }, [showErase, showThickness, saving]);
+
+  // ── Bucket flood fill (Skia snapshot → readPixels → fill → bake) ─────────────
+  const doBucketFill = useCallback(
+    (x: number, y: number) => {
+      const snap = canvasRef.current?.makeImageSnapshot();
+      if (!snap) return;
+      const iw = snap.width();
+      const ih = snap.height();
+      const layout = canvasSizeRef.current;
+      if (!layout.w || !layout.h) return;
+
+      const px = Math.max(0, Math.min(iw - 1, Math.floor((x / layout.w) * iw)));
+      const py = Math.max(0, Math.min(ih - 1, Math.floor((y / layout.h) * ih)));
+
+      const info = {
+        width: iw,
+        height: ih,
+        colorType: ColorType.RGBA_8888,
+        alphaType: AlphaType.Unpremul,
+      };
+      const pixels = snap.readPixels(0, 0, info) as Uint8Array | null;
+      if (!pixels) return;
+
+      const changed = scanlineFill(
+        pixels,
+        iw,
+        ih,
+        px,
+        py,
+        hexToRgb(selectedColorRef.current)
+      );
+      if (!changed) return;
+
+      const data = Skia.Data.fromBytes(pixels);
+      const img = Skia.Image.MakeImage(info, data, iw * 4);
+      if (!img) return;
+
+      // Bake current strokes into the new base image
+      setBaseImage(img);
+      setStrokes([]);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    },
+    [canvasRef]
+  );
+  useEffect(() => { doBucketRef.current = doBucketFill; }, [doBucketFill]);
 
   // ── PanResponder ────────────────────────────────────────────────────────────
   const pan = useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () => !showErase,
-        onMoveShouldSetPanResponder: () => !showErase,
+        onStartShouldSetPanResponder: () => !blockDrawRef.current,
+        onMoveShouldSetPanResponder: () => !blockDrawRef.current,
         onPanResponderGrant: (e) => {
-          if (showErase) return;
+          if (blockDrawRef.current) return;
           const { locationX: x, locationY: y } = e.nativeEvent;
+
+          // Bucket: single tap fill, no path drawing
+          if (selectedToolRef.current === "bucket") {
+            doBucketRef.current(x, y);
+            return;
+          }
 
           const p = Skia.Path.Make();
           p.moveTo(x, y);
@@ -312,10 +441,14 @@ function DrawingScreenNative() {
           if (!isDrawingRef.current) return;
           isDrawingRef.current = false;
           if (currentPathRef.current) {
+            const params = strokeParams(
+              selectedToolRef.current,
+              selectedColorRef.current,
+              brushSizeRef.current
+            );
             const committed: Stroke = {
               path: currentPathRef.current,
-              color: selectedColorRef.current,
-              width: brushSizeRef.current,
+              ...params,
             };
             setStrokes((prev) => [...prev, committed]);
           }
@@ -329,7 +462,7 @@ function DrawingScreenNative() {
           lastPtRef.current = null;
         },
       }),
-    // showErase intentionally excluded — guard is on isDrawingRef
+    // Guards live on refs so the responder never goes stale
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   );
@@ -346,10 +479,17 @@ function DrawingScreenNative() {
   // ── Erase all ───────────────────────────────────────────────────────────────
   const handleEraseConfirm = useCallback(() => {
     setStrokes([]);
+    setBaseImage(null);
     currentPathRef.current = null;
     setShowErase(false);
     setTick((t) => t + 1);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+  }, []);
+
+  const handleSelectTool = useCallback((tool: Tool) => {
+    setSelectedTool(tool);
+    setShowThickness(false);
+    Haptics.selectionAsync();
   }, []);
 
   // ── Save ─────────────────────────────────────────────────────────────────────
@@ -390,6 +530,9 @@ function DrawingScreenNative() {
   const topPad = insets.top + (Platform.OS === "web" ? 67 : 0);
   const bottomPad = insets.bottom + (Platform.OS === "web" ? 34 : 0);
 
+  const hasContent = strokes.length > 0 || baseImage !== null;
+  const liveParams = strokeParams(selectedTool, selectedColor, brushSize);
+
   return (
     <ImageBackground
       source={GAMES_BG}
@@ -423,19 +566,19 @@ function DrawingScreenNative() {
 
           {/* Erase all */}
           <Pressable
-            style={[styles.iconBtn, !strokes.length && styles.iconBtnDisabled]}
-            onPress={() => { if (strokes.length) setShowErase(true); }}
-            disabled={!strokes.length}
+            style={[styles.iconBtn, !hasContent && styles.iconBtnDisabled]}
+            onPress={() => { if (hasContent) setShowErase(true); }}
+            disabled={!hasContent}
             hitSlop={12}
           >
-            <Feather name="trash-2" size={26} color={strokes.length ? "#FF3B30" : "#CCC"} />
+            <Feather name="trash-2" size={26} color={hasContent ? "#FF3B30" : "#CCC"} />
           </Pressable>
 
           {/* Save */}
           <Pressable
-            style={[styles.iconBtn, styles.saveBtn, !strokes.length && styles.iconBtnDisabled]}
+            style={[styles.iconBtn, styles.saveBtn, !hasContent && styles.iconBtnDisabled]}
             onPress={handleSave}
-            disabled={!strokes.length || saving}
+            disabled={!hasContent || saving}
             hitSlop={12}
           >
             <Feather name="check" size={26} color="#FFF" />
@@ -444,8 +587,25 @@ function DrawingScreenNative() {
       </View>
 
       {/* ── Canvas ── */}
-      <View style={styles.canvasWrap}>
+      <View
+        style={styles.canvasWrap}
+        onLayout={(e) => {
+          const { width, height } = e.nativeEvent.layout;
+          setCanvasSize({ w: width, h: height });
+        }}
+      >
         <Canvas ref={canvasRef} style={StyleSheet.absoluteFill}>
+          {/* Baked base layer (after bucket fills) */}
+          {baseImage && canvasSize.w > 0 && (
+            <SkiaImage
+              image={baseImage}
+              x={0}
+              y={0}
+              width={canvasSize.w}
+              height={canvasSize.h}
+              fit="fill"
+            />
+          )}
           {/* Completed strokes */}
           {strokes.map((s, i) => (
             <Path
@@ -456,23 +616,65 @@ function DrawingScreenNative() {
               strokeWidth={s.width}
               strokeCap="round"
               strokeJoin="round"
-            />
+            >
+              {s.blur > 0 && <BlurMask blur={s.blur} style="solid" />}
+            </Path>
           ))}
           {/* Live stroke (reads from ref, re-renders on tick) */}
           {currentPathRef.current && (
             <Path
               path={currentPathRef.current}
-              color={selectedColorRef.current}
+              color={liveParams.color}
               style="stroke"
-              strokeWidth={brushSizeRef.current}
+              strokeWidth={liveParams.width}
               strokeCap="round"
               strokeJoin="round"
-            />
+            >
+              {liveParams.blur > 0 && <BlurMask blur={liveParams.blur} style="solid" />}
+            </Path>
           )}
         </Canvas>
 
         {/* Touch capture overlay */}
         <View style={StyleSheet.absoluteFill} {...pan.panHandlers} />
+
+        {/* ── Vertical tool panel (always visible, left edge) ── */}
+        <View style={styles.toolPanel} pointerEvents="box-none">
+          {TOOL_META.map(({ tool, emoji }) => (
+            <ToolButton
+              key={tool}
+              emoji={emoji}
+              selected={selectedTool === tool}
+              onPress={() => handleSelectTool(tool)}
+            />
+          ))}
+
+          {/* Thickness button */}
+          <Pressable
+            onPress={() => setShowThickness((v) => !v)}
+            hitSlop={6}
+          >
+            <View style={[styles.toolBtn, showThickness && styles.toolBtnSelected]}>
+              <View
+                style={{
+                  width: Math.max(8, brushSize),
+                  height: Math.max(8, brushSize),
+                  borderRadius: Math.max(8, brushSize) / 2,
+                  backgroundColor: "#333",
+                }}
+              />
+            </View>
+          </Pressable>
+        </View>
+
+        {/* Thickness popup (to the right of the panel) */}
+        {showThickness && (
+          <View style={styles.thicknessPopup}>
+            <ThicknessDot dotPx={9}  selected={brushSize === BRUSH_SIZES[0]} onPress={() => { setBrushSize(BRUSH_SIZES[0]); setShowThickness(false); }} />
+            <ThicknessDot dotPx={16} selected={brushSize === BRUSH_SIZES[1]} onPress={() => { setBrushSize(BRUSH_SIZES[1]); setShowThickness(false); }} />
+            <ThicknessDot dotPx={24} selected={brushSize === BRUSH_SIZES[2]} onPress={() => { setBrushSize(BRUSH_SIZES[2]); setShowThickness(false); }} />
+          </View>
+        )}
 
         {/* Erase confirmation */}
         <EraseConfirm
@@ -485,17 +687,8 @@ function DrawingScreenNative() {
         <SaveFlash visible={showSave} />
       </View>
 
-      {/* ── Bottom toolbar ── */}
+      {/* ── Bottom toolbar (palette) ── */}
       <View style={styles.bottomBar}>
-        {/* Brush sizes */}
-        <View style={styles.brushRow}>
-          <BrushBtn size={BRUSH_SIZES[0]} dotPx={9}  selected={brushSize === BRUSH_SIZES[0]} onPress={() => setBrushSize(BRUSH_SIZES[0])} />
-          <BrushBtn size={BRUSH_SIZES[1]} dotPx={16} selected={brushSize === BRUSH_SIZES[1]} onPress={() => setBrushSize(BRUSH_SIZES[1])} />
-          <BrushBtn size={BRUSH_SIZES[2]} dotPx={24} selected={brushSize === BRUSH_SIZES[2]} onPress={() => setBrushSize(BRUSH_SIZES[2])} />
-        </View>
-
-        <View style={styles.divider} />
-
         {/* Palette */}
         <View style={styles.palette}>
           {PALETTE.map((c) => (
@@ -588,12 +781,53 @@ const styles = StyleSheet.create({
     elevation: 2,
     gap: 8,
   },
-  brushRow: {
+  // Vertical tool panel
+  toolPanel: {
+    position: "absolute",
+    left: 12,
+    top: 0,
+    bottom: 0,
+    justifyContent: "center",
+    gap: 12,
+  },
+  toolBtn: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "rgba(255,255,255,0.55)",
+  },
+  toolBtnSelected: {
+    backgroundColor: "#FFFFFF",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.22,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  toolEmoji: {
+    fontSize: 26,
+  },
+  thicknessPopup: {
+    position: "absolute",
+    left: 80,
+    top: "50%",
+    marginTop: 60,
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
+    gap: 10,
+    backgroundColor: "#FFFFFF",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 28,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 10,
+    elevation: 8,
   },
-  brushBtn: {
+  thicknessOption: {
     width: 44,
     height: 44,
     borderRadius: 22,
@@ -601,14 +835,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: "transparent",
   },
-  brushBtnSelected: {
+  thicknessOptionSelected: {
     backgroundColor: "#F0F0F0",
-  },
-  divider: {
-    width: 1,
-    height: 32,
-    backgroundColor: "#E0E0E0",
-    marginHorizontal: 4,
   },
   palette: {
     flex: 1,

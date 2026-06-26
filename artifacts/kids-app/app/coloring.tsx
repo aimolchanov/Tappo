@@ -7,9 +7,7 @@ import {
   ImageBackground,
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
-  Text,
   View,
 } from "react-native";
 
@@ -30,6 +28,8 @@ import {
 import { usePop } from "@/hooks/usePopSound";
 import { useDifficulty } from "@/contexts/DifficultyContext";
 import { LEVEL_TO_MAX_COLORING } from "@/constants/difficulty";
+import { pickRandomIndex } from "@/utils/random";
+import { hexToRgb, scanlineFill } from "@/utils/floodFill";
 
 const GAMES_BG = require("@/assets/images/games_background.png");
 
@@ -47,90 +47,6 @@ const PALETTE = [
   "#FFFFFF",
   "#333333",
 ];
-
-// ─── Flood-fill utilities ──────────────────────────────────────────────────
-
-function hexToRgb(hex: string): [number, number, number] {
-  const n = parseInt(hex.replace("#", ""), 16);
-  return [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff];
-}
-
-/**
- * Span-based scanline flood-fill on raw ImageData.
- * Returns true if any pixels were changed (valid hit), false for outline tap or same color.
- * Complexity: O(filled pixels) — fast enough for 2816×1536 PNG regions.
- */
-function scanlineFill(
-  data: Uint8ClampedArray,
-  width: number,
-  height: number,
-  sx: number,
-  sy: number,
-  [fr, fg, fb]: [number, number, number]
-): boolean {
-  const gi = (x: number, y: number) => (y * width + x) * 4;
-  const i0 = gi(sx, sy);
-  const tr = data[i0], tg = data[i0 + 1], tb = data[i0 + 2];
-
-  // Tapped on dark outline → miss
-  if (tr < 60 && tg < 60 && tb < 60) return false;
-  // Already the fill color
-  if (Math.abs(tr - fr) < 10 && Math.abs(tg - fg) < 10 && Math.abs(tb - fb) < 10)
-    return false;
-
-  const isFillable = (x: number, y: number): boolean => {
-    const i = gi(x, y);
-    return (
-      Math.abs(data[i] - tr) < 40 &&
-      Math.abs(data[i + 1] - tg) < 40 &&
-      Math.abs(data[i + 2] - tb) < 40
-    );
-  };
-
-  const visited = new Uint8Array(width * height);
-  const stack: number[] = [sy * width + sx];
-  visited[sy * width + sx] = 1;
-
-  while (stack.length > 0) {
-    const pos = stack.pop()!;
-    const py = Math.floor(pos / width);
-    const px = pos % width;
-
-    // Extend span left then right
-    let lx = px;
-    while (lx > 0 && !visited[py * width + lx - 1] && isFillable(lx - 1, py)) lx--;
-    let rx = px;
-    while (rx < width - 1 && !visited[py * width + rx + 1] && isFillable(rx + 1, py))
-      rx++;
-
-    // Fill and mark span
-    for (let x = lx; x <= rx; x++) {
-      const i = gi(x, py);
-      data[i] = fr;
-      data[i + 1] = fg;
-      data[i + 2] = fb;
-      data[i + 3] = 255;
-      visited[py * width + x] = 1;
-    }
-
-    // Enqueue one seed per connected run in rows above / below
-    for (const ny of [py - 1, py + 1]) {
-      if (ny < 0 || ny >= height) continue;
-      let inSpan = false;
-      for (let x = lx; x <= rx; x++) {
-        const eligible = !visited[ny * width + x] && isFillable(x, ny);
-        if (eligible && !inSpan) {
-          stack.push(ny * width + x);
-          inSpan = true;
-        } else if (!eligible) {
-          inSpan = false;
-        }
-      }
-    }
-  }
-
-  return true;
-}
 
 // ─── SVG helpers ──────────────────────────────────────────────────────────
 
@@ -175,37 +91,6 @@ function ColorCircle({
         ]}
       />
     </Reanimated.View>
-  );
-}
-
-function ImageThumb({
-  image,
-  isSelected,
-  onPress,
-}: {
-  image: ColoringImage;
-  isSelected: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      style={[
-        styles.imageThumbnail,
-        { backgroundColor: image.pngSource ? "#F8F8F8" : image.bgColor },
-        isSelected && styles.imageThumbnailSelected,
-      ]}
-    >
-      {image.pngSource ? (
-        <RNImage
-          source={image.pngSource}
-          style={styles.thumbPng}
-          resizeMode="cover"
-        />
-      ) : (
-        <Text style={styles.thumbnailEmoji}>{image.emoji}</Text>
-      )}
-    </Pressable>
   );
 }
 
@@ -610,9 +495,11 @@ export default function ColoringScreen() {
     (img) => img.complexity <= maxComplexity
   );
 
-  const [currentId, setCurrentId] = useState(
-    availableImages[0]?.id ?? COLORING_IMAGES[0].id
-  );
+  const [currentId, setCurrentId] = useState(() => {
+    const pool =
+      availableImages.length > 0 ? availableImages : COLORING_IMAGES;
+    return pool[pickRandomIndex(pool.length, -1)].id;
+  });
   const [selectedColor, setSelectedColor] = useState(PALETTE[0]);
   const [selectedColorIdx, setSelectedColorIdx] = useState(0);
   const [allFills, setAllFills] = useState<
@@ -687,6 +574,19 @@ export default function ColoringScreen() {
     Haptics.selectionAsync();
   };
 
+  // 🔄 — load another random image. Progress of the current one is NOT saved.
+  const loadAnother = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const pool = availableImages.length > 0 ? availableImages : COLORING_IMAGES;
+    const prevIdx = pool.findIndex((img) => img.id === currentId);
+    const next = pool[pickRandomIndex(pool.length, prevIdx)];
+    setAllFills({});
+    setCurrentId(next.id);
+  }, [availableImages, currentId]);
+
+  const poolSize =
+    availableImages.length > 0 ? availableImages.length : COLORING_IMAGES.length;
+
   return (
     <ImageBackground
       source={GAMES_BG}
@@ -701,7 +601,7 @@ export default function ColoringScreen() {
         },
       ]}
     >
-      {/* ── Top bar ── */}
+      {/* ── Top bar (symmetric with Puzzles: back · refresh) ── */}
       <View style={styles.topBar}>
         <Pressable
           onPress={() => router.back()}
@@ -711,20 +611,11 @@ export default function ColoringScreen() {
           <Feather name="arrow-left" size={34} color="#FFFFFF" />
         </Pressable>
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.thumbRow}
-        >
-          {availableImages.map((img) => (
-            <ImageThumb
-              key={img.id}
-              image={img}
-              isSelected={currentId === img.id}
-              onPress={() => setCurrentId(img.id)}
-            />
-          ))}
-        </ScrollView>
+        {poolSize > 1 && (
+          <Pressable onPress={loadAnother} style={styles.backBtn} hitSlop={8}>
+            <Feather name="refresh-cw" size={28} color="#FFFFFF" />
+          </Pressable>
+        )}
       </View>
 
       {/* ── Canvas ── */}
@@ -780,8 +671,8 @@ const styles = StyleSheet.create({
     height: 80,
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
     paddingHorizontal: 12,
-    gap: 12,
   },
   backBtn: {
     width: 60,

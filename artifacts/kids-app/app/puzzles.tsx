@@ -6,12 +6,15 @@ import { useAppSettings } from "@/contexts/SettingsContext";
 import { useDifficulty } from "@/contexts/DifficultyContext";
 import { LEVEL_TO_PUZZLE } from "@/constants/difficulty";
 import { usePop } from "@/hooks/usePopSound";
+import { pickRandomIndex } from "@/utils/random";
+import { listUserPuzzles } from "@/utils/userPuzzles";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
   Dimensions,
   Image,
   ImageBackground,
+  ImageSourcePropType,
   PanResponder,
   Platform,
   Pressable,
@@ -76,7 +79,7 @@ interface PieceProps {
   boardW: number;
   boardH: number;
   snapDist: number;
-  source: ReturnType<typeof require>;
+  source: ImageSourcePropType;
   onPlaced: (id: number) => void;
   onMiss: () => void;
   onPlayMiss: () => void;
@@ -261,14 +264,31 @@ export default function PuzzlesScreen() {
   const totalPieces = cols * rows;
 
   // ── State ─────────────────────────────────────────────────────
-  const [puzzleIdx, setPuzzleIdx] = useState(0);
+  // Image source: stock pack or the child's own cloned drawings
+  const [srcMode, setSrcMode] = useState<"stock" | "user">("stock");
+  const [userPuzzles, setUserPuzzles] = useState<string[]>([]);
+  // Random starting image (no immediate repeat handled on subsequent picks)
+  const [puzzleIdx, setPuzzleIdx] = useState(() =>
+    pickRandomIndex(PUZZLE_IMAGES.length, -1)
+  );
+  const [userIdx, setUserIdx] = useState(0);
   const [resetKey, setResetKey] = useState(0);
   // Track each placed piece by its id
   const [placedIds, setPlacedIds] = useState<Record<number, boolean>>({});
 
-  const puzzleImage = PUZZLE_IMAGES[puzzleIdx % PUZZLE_IMAGES.length];
+  const hasImage = srcMode === "stock" || userPuzzles.length > 0;
+  const canRefresh =
+    srcMode === "stock"
+      ? PUZZLE_IMAGES.length > 1
+      : userPuzzles.length > 1;
+
+  const puzzleImage: ImageSourcePropType =
+    srcMode === "stock"
+      ? PUZZLE_IMAGES[puzzleIdx % PUZZLE_IMAGES.length]
+      : { uri: userPuzzles[userIdx % Math.max(1, userPuzzles.length)] };
+
   const placedCount = Object.keys(placedIds).length;
-  const isComplete = placedCount === totalPieces && totalPieces > 0;
+  const isComplete = hasImage && placedCount === totalPieces && totalPieces > 0;
 
   const startTimeRef = useRef(Date.now());
   const missCountRef = useRef(0);
@@ -319,9 +339,13 @@ export default function PuzzlesScreen() {
       }
     }, 150);
 
-    // After short celebration → advance to next image, fresh puzzle
+    // After short celebration → load a new random image, fresh puzzle
     setTimeout(() => {
-      setPuzzleIdx((i) => i + 1);
+      if (srcMode === "stock") {
+        setPuzzleIdx((i) => pickRandomIndex(PUZZLE_IMAGES.length, i));
+      } else {
+        setUserIdx((i) => pickRandomIndex(userPuzzles.length, i));
+      }
       setPlacedIds({});
       startTimeRef.current = Date.now();
       missCountRef.current = 0;
@@ -353,7 +377,8 @@ export default function PuzzlesScreen() {
     [snapPlayer, soundEffects, volume]
   );
 
-  const resetPuzzle = useCallback(() => {
+  // Reset round bookkeeping (also reshuffles pieces via resetKey → pieces useMemo)
+  const resetRound = useCallback(() => {
     setResetKey((k) => k + 1);
     setPlacedIds({});
     startTimeRef.current = Date.now();
@@ -361,6 +386,44 @@ export default function PuzzlesScreen() {
     completionReportedRef.current = false;
     celebScale.value = 1;
   }, [celebScale]);
+
+  // Load the child's cloned puzzles on mount (available when toggling source)
+  useEffect(() => {
+    let alive = true;
+    listUserPuzzles().then((list) => {
+      if (alive) setUserPuzzles(list);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // 🔄 — load a DIFFERENT random puzzle from the current source.
+  // Piece shuffle happens automatically on load (pieces useMemo on resetKey).
+  const loadAnother = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (srcMode === "stock") {
+      setPuzzleIdx((i) => pickRandomIndex(PUZZLE_IMAGES.length, i));
+    } else {
+      setUserIdx((i) => pickRandomIndex(userPuzzles.length, i));
+    }
+    resetRound();
+  }, [srcMode, userPuzzles.length, resetRound]);
+
+  // Toggle between stock pictures (📚) and the child's drawings (🎨)
+  const toggleSource = useCallback(async () => {
+    Haptics.selectionAsync();
+    if (srcMode === "stock") {
+      const list = await listUserPuzzles();
+      setUserPuzzles(list);
+      setUserIdx(list.length ? pickRandomIndex(list.length, -1) : 0);
+      setSrcMode("user");
+    } else {
+      setSrcMode("stock");
+      setPuzzleIdx((i) => pickRandomIndex(PUZZLE_IMAGES.length, i));
+    }
+    resetRound();
+  }, [srcMode, resetRound]);
 
   // ── Layout ────────────────────────────────────────────────────
   const webOff = Platform.OS === "web" ? 67 : 0;
@@ -495,23 +558,52 @@ export default function PuzzlesScreen() {
         </Pressable>
 
         {/* Progress dots: one per piece, fill teal as pieces snap */}
-        <View style={styles.progressRow}>
-          {Array.from({ length: totalPieces }, (_, i) => (
-            <View
-              key={i}
-              style={[
-                styles.progressDot,
-                i < placedCount && styles.progressDotFilled,
-              ]}
-            />
-          ))}
-        </View>
+        {hasImage ? (
+          <View style={styles.progressRow}>
+            {Array.from({ length: totalPieces }, (_, i) => (
+              <View
+                key={i}
+                style={[
+                  styles.progressDot,
+                  i < placedCount && styles.progressDotFilled,
+                ]}
+              />
+            ))}
+          </View>
+        ) : (
+          <View style={{ flex: 1 }} />
+        )}
 
-        <Pressable onPress={resetPuzzle} style={styles.headerBtn}>
-          <Feather name="refresh-cw" size={24} color="#6B5B4E" />
-        </Pressable>
+        <View style={styles.headerRight}>
+          {/* Source toggle: stock pack ↔ my drawings */}
+          <Pressable onPress={toggleSource} style={styles.headerBtn}>
+            <Feather
+              name={srcMode === "stock" ? "book-open" : "edit-2"}
+              size={22}
+              color="#6B5B4E"
+            />
+          </Pressable>
+
+          {/* 🔄 — load another random puzzle (hidden when nothing to switch to) */}
+          {hasImage && canRefresh && (
+            <Pressable onPress={loadAnother} style={styles.headerBtn}>
+              <Feather name="refresh-cw" size={24} color="#6B5B4E" />
+            </Pressable>
+          )}
+        </View>
       </View>
 
+      {/* ── Empty state: no user puzzles yet (icon hint, no text) ── */}
+      {!hasImage && (
+        <View style={styles.emptyHint} pointerEvents="none">
+          <Feather name="image" size={56} color="#B8A593" />
+          <Feather name="arrow-right" size={40} color="#B8A593" />
+          <Feather name="grid" size={56} color="#B8A593" />
+        </View>
+      )}
+
+      {hasImage && (
+        <>
       {/* ── Board card shadow ── */}
       <View
         style={{
@@ -607,6 +699,8 @@ export default function PuzzlesScreen() {
           />
         ))}
       </Reanimated.View>
+        </>
+      )}
 
     </ImageBackground>
   );
@@ -632,6 +726,18 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.55)",
     justifyContent: "center",
     alignItems: "center",
+  },
+  headerRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  emptyHint: {
+    ...StyleSheet.absoluteFillObject,
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 18,
   },
   progressRow: {
     flex: 1,

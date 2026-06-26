@@ -3,9 +3,10 @@ import * as FileSystem from "expo-file-system";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
 import * as Sharing from "expo-sharing";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
+  Animated,
   FlatList,
   Image,
   ImageBackground,
@@ -21,6 +22,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { usePop } from "@/hooks/usePopSound";
+import { copyToUserPuzzles } from "@/utils/userPuzzles";
 
 const GAMES_BG = require("@/assets/images/games_background.png");
 
@@ -37,15 +39,22 @@ interface WorkItem {
 function Thumb({
   item,
   size,
+  manageMode,
   onPress,
+  onClone,
+  onDelete,
 }: {
   item: WorkItem;
   size: number;
+  manageMode: boolean;
   onPress: () => void;
+  onClone: () => void;
+  onDelete: () => void;
 }) {
   return (
     <Pressable
       onPress={() => {
+        if (manageMode) return;
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         onPress();
       }}
@@ -59,7 +68,139 @@ function Thumb({
         style={{ width: size, height: size, borderRadius: size * 0.12 }}
         resizeMode="cover"
       />
+
+      {manageMode && (
+        <>
+          {/* Clone to puzzles (top-left) */}
+          <Pressable
+            onPress={onClone}
+            style={[styles.cardAction, styles.cardActionClone]}
+            hitSlop={8}
+          >
+            <Feather name="grid" size={20} color="#FFF" />
+          </Pressable>
+
+          {/* Delete (top-right) */}
+          <Pressable
+            onPress={onDelete}
+            style={[styles.cardAction, styles.cardActionDelete]}
+            hitSlop={8}
+          >
+            <Feather name="trash-2" size={20} color="#FFF" />
+          </Pressable>
+        </>
+      )}
     </Pressable>
+  );
+}
+
+// ─── Parental hold-to-unlock button (manage mode toggle) ───────────
+function ManageLockButton({
+  active,
+  onUnlock,
+  onLock,
+}: {
+  active: boolean;
+  onUnlock: () => void;
+  onLock: () => void;
+}) {
+  const progress = useRef(new Animated.Value(0)).current;
+  const anim = useRef<Animated.CompositeAnimation | null>(null);
+  const fired = useRef(false);
+
+  const ringScale = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.5, 2.2],
+  });
+  const ringOpacity = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.35, 0],
+  });
+
+  const handleIn = () => {
+    if (active) return;
+    fired.current = false;
+    progress.setValue(0);
+    anim.current = Animated.timing(progress, {
+      toValue: 1,
+      duration: 3000,
+      useNativeDriver: true,
+    });
+    anim.current.start(({ finished }) => {
+      if (finished && !fired.current) {
+        fired.current = true;
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        onUnlock();
+      }
+    });
+  };
+
+  const handleOut = () => {
+    anim.current?.stop();
+    Animated.timing(progress, {
+      toValue: 0,
+      duration: 200,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  return (
+    <View style={styles.lockWrap}>
+      {!active && (
+        <Animated.View
+          style={[
+            styles.lockRing,
+            { transform: [{ scale: ringScale }], opacity: ringOpacity },
+          ]}
+        />
+      )}
+      <Pressable
+        onPressIn={active ? undefined : handleIn}
+        onPressOut={active ? undefined : handleOut}
+        onPress={active ? onLock : undefined}
+        style={[styles.backBtn, active && styles.lockBtnActive]}
+        hitSlop={12}
+      >
+        <Feather
+          name={active ? "check" : "lock"}
+          size={24}
+          color={active ? "#FFF" : "#555"}
+        />
+      </Pressable>
+    </View>
+  );
+}
+
+// ─── Clone confirmation flash ──────────────────────────────────────
+function CloneFlash({ visible }: { visible: boolean }) {
+  const opacity = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (visible) {
+      opacity.setValue(0);
+      translateY.setValue(0);
+      Animated.parallel([
+        Animated.sequence([
+          Animated.timing(opacity, { toValue: 1, duration: 150, useNativeDriver: true }),
+          Animated.delay(550),
+          Animated.timing(opacity, { toValue: 0, duration: 300, useNativeDriver: true }),
+        ]),
+        Animated.timing(translateY, { toValue: -40, duration: 1000, useNativeDriver: true }),
+      ]).start();
+    }
+  }, [visible, opacity, translateY]);
+
+  if (!visible) return null;
+
+  return (
+    <View style={styles.cloneFlashWrap} pointerEvents="none">
+      <Animated.View
+        style={[styles.cloneFlashCard, { opacity, transform: [{ translateY }] }]}
+      >
+        <Feather name="grid" size={44} color="#4ECDC4" />
+      </Animated.View>
+    </View>
   );
 }
 
@@ -145,6 +286,15 @@ export default function MyWorksScreen() {
   const [works, setWorks] = useState<WorkItem[]>([]);
   const [selected, setSelected] = useState<WorkItem | null>(null);
   const [loading, setLoading] = useState(true);
+  const [manageMode, setManageMode] = useState(false);
+  const [cloneFlash, setCloneFlash] = useState(false);
+  const cloneTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (cloneTimer.current) clearTimeout(cloneTimer.current);
+    };
+  }, []);
 
   const loadWorks = useCallback(async () => {
     if (Platform.OS === "web") { setLoading(false); return; }
@@ -182,6 +332,36 @@ export default function MyWorksScreen() {
     loadWorks();
   };
 
+  const handleClone = useCallback((item: WorkItem) => {
+    copyToUserPuzzles(item.uri)
+      .then(() => {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        setCloneFlash(true);
+        if (cloneTimer.current) clearTimeout(cloneTimer.current);
+        cloneTimer.current = setTimeout(() => setCloneFlash(false), 1000);
+      })
+      .catch(() => {
+        Alert.alert("Ошибка", "Не удалось добавить в пазлы.");
+      });
+  }, []);
+
+  const handleCardDelete = useCallback((item: WorkItem) => {
+    Alert.alert("Удалить рисунок?", "Это нельзя отменить.", [
+      { text: "Отмена", style: "cancel" },
+      {
+        text: "Удалить",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await FileSystem.deleteAsync(item.uri, { idempotent: true });
+          } catch {}
+          loadWorks();
+        },
+      },
+    ]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadWorks]);
+
   // Grid sizing: 3 columns in landscape
   const COLS = W > 700 ? 3 : 2;
   const GUTTER = 16;
@@ -213,7 +393,15 @@ export default function MyWorksScreen() {
           <Feather name="arrow-left" size={28} color="#555" />
         </Pressable>
         <Text style={styles.title}>⭐ Мои работы</Text>
-        <View style={{ width: 52 }} />
+        {works.length > 0 ? (
+          <ManageLockButton
+            active={manageMode}
+            onUnlock={() => setManageMode(true)}
+            onLock={() => setManageMode(false)}
+          />
+        ) : (
+          <View style={{ width: 52 }} />
+        )}
       </View>
 
       {/* ── Content ── */}
@@ -241,11 +429,17 @@ export default function MyWorksScreen() {
             <Thumb
               item={item}
               size={thumbSize}
+              manageMode={manageMode}
               onPress={() => setSelected(item)}
+              onClone={() => handleClone(item)}
+              onDelete={() => handleCardDelete(item)}
             />
           )}
         />
       )}
+
+      {/* ── Clone confirmation ── */}
+      <CloneFlash visible={cloneFlash} />
 
       {/* ── Viewer ── */}
       {selected && (
@@ -315,6 +509,62 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.12,
     shadowRadius: 6,
     elevation: 4,
+  },
+  cardAction: {
+    position: "absolute",
+    top: 8,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: "center",
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  cardActionClone: {
+    left: 8,
+    backgroundColor: "#4ECDC4",
+  },
+  cardActionDelete: {
+    right: 8,
+    backgroundColor: "#EF4444",
+  },
+  lockWrap: {
+    width: 52,
+    height: 52,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  lockRing: {
+    position: "absolute",
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: "#F59E0B",
+  },
+  lockBtnActive: {
+    backgroundColor: "#4ECDC4",
+  },
+  cloneFlashWrap: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  cloneFlashCard: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: "#FFF",
+    justifyContent: "center",
+    alignItems: "center",
+    shadowColor: "#4ECDC4",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 16,
+    elevation: 8,
   },
   viewerBg: {
     flex: 1,
